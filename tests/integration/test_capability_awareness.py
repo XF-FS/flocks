@@ -308,7 +308,7 @@ class TestRexPromptWorkflowAwareness:
         rex = await Agent.get("rex")
         prompt = rex.prompt or ""
         assert "Single IOC basic lookup only" in prompt
-        assert '"查询 8.8.8.8 的情报" -> Rex should directly query TI tools' in prompt
+        assert '"查询 8.8.8.8 的情报" -> OneExpert should directly query TI tools' in prompt
         assert "tool_search` if needed -> direct TI query tool -> answer" in prompt
 
 

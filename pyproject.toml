@@ -101,6 +101,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["flocks"]
+# Rex 分片提示词与 prompt_builder 同级目录；显式加入 wheel 以免 hatch 仅打 .py
+artifacts = [
+  "flocks/agent/agents/rex/prompt/*.md",
+]
 
 [tool.ruff]
 line-length = 120
