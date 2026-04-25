@@ -60,6 +60,7 @@ class AgentResponse(BaseModel):
     Includes required 'permission' and 'options' fields.
     """
     name: str
+    displayName: Optional[str] = None
     description: Optional[str] = None
     descriptionCn: Optional[str] = None
     mode: str = "primary"
@@ -108,6 +109,7 @@ def agent_to_response(
 
     return AgentResponse(
         name=agent.name,
+        displayName=agent.display_name,
         description=agent.description,
         descriptionCn=agent.description_cn,
         mode=agent.mode,

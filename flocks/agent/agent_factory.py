@@ -144,6 +144,7 @@ def load_agent(agent_dir: Path, native: bool = False) -> Optional[AgentInfo]:
 
     return AgentInfo(
         name=name,
+        display_name=raw.get("display_name") or raw.get("displayName"),
         description=raw.get("description"),
         description_cn=desc_cn,
         mode=raw.get("mode", "subagent"),
@@ -335,6 +336,7 @@ def yaml_to_agent_info(raw: dict, yaml_path: Path) -> AgentInfo:
 
     return AgentInfo(
         name=name,
+        display_name=raw.get("display_name") or raw.get("displayName"),
         description=raw.get("description"),
         description_cn=desc_cn,
         mode=raw.get("mode", "subagent"),

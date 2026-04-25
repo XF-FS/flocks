@@ -29,6 +29,7 @@ import { useSessionMessages } from '@/hooks/useSessions';
 import { useSSE, type SSEConnectionStatus } from '@/hooks/useSSE';
 import { useReasoningToggle } from '@/hooks/useReasoningToggle';
 import { usePendingQuestions, type PendingQuestion } from '@/hooks/usePendingQuestions';
+import { useAgents } from '@/hooks/useAgents';
 import { sessionApi } from '@/api/session';
 import client, { getApiBase } from '@/api/client';
 import { commandAPI, type Command } from '@/api/skill';
@@ -313,6 +314,7 @@ export default function SessionChat({
 }: SessionChatProps) {
   const { t } = useTranslation('session');
   const { t: tCommon } = useTranslation('common');
+  const { agents } = useAgents();
   const toast = useToast();
   const compact = display?.compact ?? true;
   const showActions = display?.showActions ?? false;
@@ -421,6 +423,9 @@ export default function SessionChat({
   );
   const hasUploadingFiles = attachments.some((attachment) => attachment.status === 'uploading');
   const canSend = !sending && !isStreaming && !hasUploadingFiles && (!!input.trim() || successfulAttachments.length > 0);
+  const effectiveAgentId = agentName || 'rex';
+  const matchedDisplayAgent = agents.find((agent) => agent.name === effectiveAgentId);
+  const effectiveAgentLabel = matchedDisplayAgent?.displayName || matchedDisplayAgent?.descriptionCn || matchedDisplayAgent?.name || effectiveAgentId;
 
   const scrollToBottom = useCallback(() => {
     if (!isAtBottomRef.current) return;
@@ -1399,8 +1404,8 @@ export default function SessionChat({
               <div className={`flex justify-start ${!compact ? 'group w-full' : ''}`}>
                 <div className={`${compact ? 'max-w-[90%] px-4 py-3 rounded-xl' : 'max-w-2xl w-full px-6 py-4 rounded-2xl'} shadow-sm bg-white border border-gray-200 text-sm`}>
                   <div className="text-xs font-medium mb-1.5 opacity-70 flex items-center gap-1.5">
-                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white text-[9px] font-bold">R</span>
-                    Rex
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white text-[9px] font-bold">{effectiveAgentLabel.charAt(0).toUpperCase()}</span>
+                    {effectiveAgentLabel}
                   </div>
                   <div className="flex items-center gap-2 text-sm text-gray-500">
                     <div className="flex gap-0.5">
@@ -1441,8 +1446,8 @@ export default function SessionChat({
 
       {/* Follow-up input */}
       {!hideInput && (
-        <div className={`flex-shrink-0 border-t border-gray-200 bg-white ${compact ? 'px-4 py-3' : 'px-6 py-4'}`}>
-          <div className={`flex min-w-0 items-end gap-2 ${!compact ? 'max-w-3xl mx-auto w-full gap-3' : ''}`}>
+        <div className={`flex-shrink-0 bg-white ${compact ? 'pl-4 pr-4 pb-4' : 'pl-6 pr-6 pb-6'}`}>
+          <div className={`w-full ${!compact ? 'max-w-[960px] mx-auto' : ''}`}>
             <input
               ref={fileInputRef}
               type="file"
@@ -1454,18 +1459,20 @@ export default function SessionChat({
                 event.target.value = '';
               }}
             />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={sending || isStreaming}
-              title={t('chat.upload.select')}
-              className={`flex-shrink-0 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${
-                compact ? 'w-10 h-[40px]' : 'w-12 h-[52px] rounded-xl'
-              } inline-flex items-center justify-center`}
+            <div
+              onDragOver={handleComposerDragOver}
+              onDragLeave={handleComposerDragLeave}
+              onDrop={handleComposerDrop}
+              className={`relative flex flex-col rounded-xl border transition-all bg-white/90 shadow-[0px_4px_16px_0px_#0000000D] dark:bg-[#292929] dark:text-gray-100 ${
+                isCompacting
+                  ? 'border-amber-300 bg-amber-50/50'
+                  : isDragOver
+                    ? 'border-sky-400 ring-2 ring-sky-100'
+                    : isStreaming
+                      ? 'border-gray-200'
+                      : 'border-[#0000001F] dark:border-white/10'
+              }`}
             >
-              <Plus className="w-4 h-4" />
-            </button>
-            <div className="relative min-w-0 flex-1">
               <CommandDropdown
                 visible={showCommandDropdown}
                 query={commandQuery}
@@ -1477,163 +1484,187 @@ export default function SessionChat({
                   textareaRef.current?.focus();
                 }}
               />
-              <div
-                onDragOver={handleComposerDragOver}
-                onDragLeave={handleComposerDragLeave}
-                onDrop={handleComposerDrop}
-                className={`border rounded-lg focus-within:border-gray-400 focus-within:ring-2 focus-within:ring-gray-100 transition-all bg-white overflow-hidden ${
-                  isCompacting
-                    ? 'border-amber-200 bg-amber-50/30'
-                    : isDragOver
-                      ? 'border-sky-400 bg-sky-50/70 ring-2 ring-sky-100'
-                      : isStreaming
-                        ? 'border-gray-200 bg-gray-50'
-                        : 'border-gray-300'
-                } ${!compact ? 'border-2 rounded-xl focus-within:ring-4' : ''}`}
-              >
-                {/* Node reference chip */}
-                {nodeRef && (
-                  <div className="flex items-center gap-1.5 px-3 pt-2.5 pb-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
-                    <code className="text-[11px] font-mono font-semibold text-slate-700 truncate flex-1">{nodeRef.id}</code>
-                    <span className="text-[10px] text-slate-400 flex-shrink-0">{nodeRef.type}</span>
-                    {onNodeRefDismiss && (
-                      <button
-                        onClick={onNodeRefDismiss}
-                        className="ml-1 text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
-                        title={t('chat.removeNodeRef')}
+              {/* Node reference chip */}
+              {nodeRef && (
+                <div className="flex items-center gap-1.5 px-3 pt-2.5 pb-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
+                  <code className="text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 truncate flex-1">{nodeRef.id}</code>
+                  <span className="text-[10px] text-slate-400 flex-shrink-0">{nodeRef.type}</span>
+                  {onNodeRefDismiss && (
+                    <button
+                      onClick={onNodeRefDismiss}
+                      className="ml-1 text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+                      title={t('chat.removeNodeRef')}
+                    >
+                      <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              )}
+              {/* Attachments */}
+              {attachments.length > 0 && (
+                <div className={`flex flex-wrap gap-2 px-3 ${nodeRef ? 'pb-2' : 'pt-3'}`}>
+                  {attachments.map((attachment) => {
+                    const isUploading = attachment.status === 'uploading';
+                    const isError = attachment.status === 'error';
+                    const attachmentPath = attachment.workspacePath ?? null;
+                    return (
+                      <div
+                        key={attachment.id}
+                        className={`inline-flex max-w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
+                          isError
+                            ? 'border-red-200 bg-red-50 text-red-700'
+                            : isUploading
+                              ? 'border-sky-200 bg-sky-50 text-sky-700'
+                              : 'border-gray-200 bg-gray-50 text-gray-700'
+                        }`}
                       >
-                        <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                )}
-                {attachments.length > 0 && (
-                  <div className={`flex flex-wrap gap-2 px-3 ${nodeRef ? 'pb-2' : 'pt-2'} ${attachments.length > 0 ? '' : 'hidden'}`}>
-                    {attachments.map((attachment) => {
-                      const isUploading = attachment.status === 'uploading';
-                      const isError = attachment.status === 'error';
-                      const attachmentPath = attachment.workspacePath ?? null;
-                      return (
-                        <div
-                          key={attachment.id}
-                          className={`inline-flex max-w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
-                            isError
-                              ? 'border-red-200 bg-red-50 text-red-700'
-                              : isUploading
-                                ? 'border-sky-200 bg-sky-50 text-sky-700'
-                                : 'border-gray-200 bg-gray-50 text-gray-700'
-                          }`}
-                        >
-                          {isUploading ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
-                          ) : isError ? (
-                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                          ) : (
-                            <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                        {isUploading ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                        ) : isError ? (
+                          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                        ) : (
+                          <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">{attachment.name}</div>
+                          {attachmentPath && (
+                            <div className="truncate text-[11px] opacity-70">{attachmentPath}</div>
                           )}
-                          <div className="min-w-0">
-                            <div className="truncate font-medium">{attachment.name}</div>
-                            {attachmentPath && (
-                              <div className="truncate text-[11px] opacity-70">{attachmentPath}</div>
-                            )}
-                            {attachment.error && (
-                              <div className="truncate text-[11px]">{attachment.error}</div>
-                            )}
-                          </div>
-                          {isError && (
-                            <button
-                              type="button"
-                              onClick={() => handleRetryAttachment(attachment.id)}
-                              className="rounded p-0.5 hover:bg-white/70 transition-colors"
-                              title={t('chat.upload.retry')}
-                            >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                            </button>
+                          {attachment.error && (
+                            <div className="truncate text-[11px]">{attachment.error}</div>
                           )}
+                        </div>
+                        {isError && (
                           <button
                             type="button"
-                            onClick={() => handleRemoveAttachment(attachment.id)}
+                            onClick={() => handleRetryAttachment(attachment.id)}
                             className="rounded p-0.5 hover:bg-white/70 transition-colors"
-                            title={t('chat.upload.remove')}
+                            title={t('chat.upload.retry')}
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <RefreshCw className="w-3.5 h-3.5" />
                           </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {isDragOver && (
-                  <div className="px-3 pb-1 text-[11px] text-sky-600">
-                    {t('chat.upload.dropHint')}
-                  </div>
-                )}
-                <div className={nodeRef || attachments.length > 0 ? 'px-3 pb-2.5' : `px-3 ${compact ? 'py-2' : 'py-3'}`}>
-                  <textarea
-                    ref={textareaRef}
-                    value={input}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setInput(val);
-                      const trimmed = val.trimStart();
-                      if (trimmed.startsWith('/') && !trimmed.includes(' ') && successfulAttachments.length === 0) {
-                        void loadCommandsIfNeeded();
-                        const q = trimmed.slice(1);
-                        setCommandQuery(q);
-                        setSelectedCommandIndex(0);
-                        setShowCommandDropdown(true);
-                      } else {
-                        setShowCommandDropdown(false);
-                      }
-                    }}
-                    onBlur={() => { setTimeout(() => setShowCommandDropdown(false), 100); }}
-                    onCompositionStart={() => { isComposingRef.current = true; }}
-                    onCompositionEnd={() => { isComposingRef.current = false; }}
-                    onPaste={handleComposerPaste}
-                    onKeyDown={handleKeyDown}
-                    placeholder={
-                      isCompacting
-                        ? t('chat.placeholderCompacting')
-                        : isStreaming
-                          ? t('chat.placeholderStreaming')
-                          : nodeRef
-                            ? t('chat.placeholderNodeRef', { nodeId: nodeRef.id })
-                            : effectivePlaceholder
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveAttachment(attachment.id)}
+                          className="rounded p-0.5 hover:bg-white/70 transition-colors"
+                          title={t('chat.upload.remove')}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {isDragOver && (
+                <div className="px-3 pb-1 text-[11px] text-sky-600">
+                  {t('chat.upload.dropHint')}
+                </div>
+              )}
+              {/* Textarea area */}
+              <div className={`overflow-hidden relative ${compact ? 'py-3 px-3' : 'py-3 px-3'}`}>
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setInput(val);
+                    const trimmed = val.trimStart();
+                    if (trimmed.startsWith('/') && !trimmed.includes(' ') && successfulAttachments.length === 0) {
+                      void loadCommandsIfNeeded();
+                      const q = trimmed.slice(1);
+                      setCommandQuery(q);
+                      setSelectedCommandIndex(0);
+                      setShowCommandDropdown(true);
+                    } else {
+                      setShowCommandDropdown(false);
                     }
-                    className={`w-full resize-none outline-none text-sm placeholder-gray-400 ${
-                      isStreaming ? 'text-gray-400 cursor-not-allowed' : 'text-gray-900'
-                    } ${!compact ? 'bg-transparent' : ''}`}
-                    style={{ minHeight: '24px', maxHeight: compact ? '96px' : '200px' }}
-                    disabled={sending || isStreaming}
-                    rows={1}
-                  />
+                  }}
+                  onBlur={() => { setTimeout(() => setShowCommandDropdown(false), 100); }}
+                  onCompositionStart={() => { isComposingRef.current = true; }}
+                  onCompositionEnd={() => { isComposingRef.current = false; }}
+                  onPaste={handleComposerPaste}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    isCompacting
+                      ? t('chat.placeholderCompacting')
+                      : isStreaming
+                        ? t('chat.placeholderStreaming')
+                        : nodeRef
+                          ? t('chat.placeholderNodeRef', { nodeId: nodeRef.id })
+                          : effectivePlaceholder
+                  }
+                  className={`w-full text-sm bg-transparent resize-none overflow-x-hidden outline-none ${
+                    isStreaming ? 'text-gray-400 cursor-not-allowed placeholder:text-gray-400' : 'text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-white/40'
+                  }`}
+                  style={{ minHeight: compact ? '40px' : '40px', maxHeight: compact ? '96px' : '216px' }}
+                  disabled={sending || isStreaming}
+                  rows={2}
+                />
+              </div>
+              {/* Bottom bar with buttons */}
+              <div className="flex justify-between items-center p-3 border-t border-[#DBDBDB]/60 dark:border-[#434343]">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center">
+                    <div aria-label={t('chat.upload.select')} className="flex">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={sending || isStreaming}
+                        className="rounded-lg bg-transparent p-2 text-gray-800 dark:text-white outline-hidden transition hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={t('chat.upload.select')}
+                      >
+                        <svg className="w-3 h-3" viewBox="0 0 9 9" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M4.33329 0.666992V8.00033M0.666626 4.33366H7.99996" stroke="currentColor" strokeWidth="1.33" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {isStreaming ? (
+                    <button
+                      type="button"
+                      onClick={handleAbort}
+                      className="flex items-center gap-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 text-sm font-medium transition-colors"
+                      title={t('chat.stopTitle')}
+                    >
+                      <Square className="w-4 h-4 fill-current" />
+                      <span>{t('chat.stopTitle')}</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center">
+                      <div aria-label={t('chat.send')} className="flex">
+                        <button
+                          type="button"
+                          onClick={handleSend}
+                          disabled={!canSend}
+                          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                            canSend
+                              ? 'bg-red-600 hover:bg-red-700 text-white'
+                              : 'bg-[#E0E0E0] dark:bg-white/25 text-[#110F0F]/20 dark:text-stone-950/60 cursor-not-allowed'
+                          }`}
+                          title={hasUploadingFiles ? t('chat.upload.waiting') : undefined}
+                        >
+                          {sending || hasUploadingFiles ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M8 13.3333V2.66667M8 2.66667L4 6.66667M8 2.66667L12 6.66667" stroke="currentColor" strokeWidth="1.33" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                          <span>{t('chat.send')}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-            <button
-              onClick={handleSend}
-              disabled={!canSend}
-              className={`flex-shrink-0 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 text-sm transition-colors ${
-                compact ? 'px-3 py-2 h-[40px]' : 'px-6 py-3 h-[52px] rounded-xl shadow-md hover:shadow-lg'
-              }`}
-              title={hasUploadingFiles ? t('chat.upload.waiting') : undefined}
-            >
-              {sending || hasUploadingFiles ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            </button>
-            {isStreaming && (
-              <button
-                onClick={handleAbort}
-                className={`flex-shrink-0 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-lg hover:from-red-700 hover:to-red-600 flex items-center gap-1 text-sm transition-all shadow ${
-                  compact ? 'px-3 py-2 h-[40px]' : 'px-4 py-3 h-[52px] rounded-xl'
-                }`}
-                title={t('chat.stopTitle')}
-              >
-                <Square className="w-4 h-4 fill-current" />
-              </button>
-            )}
           </div>
         </div>
       )}
@@ -1692,6 +1723,7 @@ function ChatMessageBubbleInner({
   compactedMessages,
 }: ChatMessageBubbleProps) {
   const { t } = useTranslation('session');
+  const { agents } = useAgents();
   const isUser = message.role === 'user';
   const parts: MessagePart[] = Array.isArray(message.parts) ? message.parts : [];
   const { getPartExpanded, togglePart, isReasoningDone } = useReasoningToggle(parts, message.finish);
@@ -1727,7 +1759,9 @@ function ChatMessageBubbleInner({
     );
   }
   const rawAgentName = message.agent || 'rex';
-  const agentName = rawAgentName.charAt(0).toUpperCase() + rawAgentName.slice(1);
+  const matchedAgent = agents.find((agent) => agent.name === rawAgentName);
+  const displayAgentName = matchedAgent?.displayName || matchedAgent?.descriptionCn || matchedAgent?.name || rawAgentName || 'rex';
+  const agentName = displayAgentName.charAt(0).toUpperCase() + displayAgentName.slice(1);
 
   const getTextContent = () =>
     parts
@@ -1838,6 +1872,24 @@ function ChatMessageBubbleInner({
                     ? () => onQuestionReject(part.callID!, pendingQuestions![part.callID!].requestId)
                     : undefined}
                 />
+              )}
+
+              {/* File attachment */}
+              {part.type === 'file' && part.url && (
+                <div className="mt-1.5 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <FileText className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-gray-800 truncate">
+                      {part.filename || t('chat.file.defaultName')}
+                    </div>
+                    <div className="text-xs text-gray-400 truncate">{part.url}</div>
+                  </div>
+                  {(part.mime) && (
+                    <span className="text-[10px] text-gray-400 bg-gray-100 rounded px-1.5 py-0.5 flex-shrink-0">
+                      {part.mime}
+                    </span>
+                  )}
+                </div>
               )}
 
               {/* Reasoning / thinking */}

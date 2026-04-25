@@ -2,6 +2,7 @@ import client from './client';
 
 export interface Agent {
   name: string;
+  displayName?: string;
   description?: string;
   /** Chinese UI label; English \`description\` is used for delegation/tooling. */
   descriptionCn?: string;

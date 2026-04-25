@@ -317,6 +317,10 @@ class Agent:
                     item.prompt = item.prompt + "\n\n" + value.prompt_append
                 if value.description:
                     item.description = value.description
+                if getattr(value, "display_name", None) is not None:
+                    item.display_name = getattr(value, "display_name")
+                elif getattr(value, "displayName", None) is not None:
+                    item.display_name = getattr(value, "displayName")
                 if value.description_cn is not None:
                     item.description_cn = value.description_cn
                 if value.temperature is not None:

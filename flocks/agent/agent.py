@@ -118,6 +118,7 @@ class AgentInfo(BaseModel):
     model_config = {"populate_by_name": True}
 
     name: str
+    display_name: Optional[str] = Field(default=None, alias="displayName")
     description: Optional[str] = None
     # Chinese UI label; English ``description`` is used for delegation prompts / tooling.
     description_cn: Optional[str] = None

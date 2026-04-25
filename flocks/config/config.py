@@ -71,6 +71,7 @@ class AgentConfig(BaseModel):
     top_p: Optional[float] = None
     prompt: Optional[str] = None
     prompt_append: Optional[str] = Field(None, alias="promptAppend")
+    display_name: Optional[str] = Field(None, alias="displayName")
     description: Optional[str] = Field(None, description="Description of when to use the agent")
     description_cn: Optional[str] = Field(
         None,
