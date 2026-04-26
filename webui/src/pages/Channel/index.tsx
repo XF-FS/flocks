@@ -998,9 +998,10 @@ function AccountCard({ id, config, onChange, onRename, onRemove }: AccountCardPr
 interface WeComPanelProps {
   config: WeComChannelConfig;
   onChange: (c: WeComChannelConfig) => void;
+  i18nKey?: 'wecom' | 'wecom_new';
 }
 
-function WeComPanel({ config, onChange }: WeComPanelProps) {
+function WeComPanel({ config, onChange, i18nKey = 'wecom' }: WeComPanelProps) {
   const { t } = useTranslation('channel');
   const set = useCallback(
     <K extends keyof WeComChannelConfig>(key: K, value: WeComChannelConfig[K]) =>
@@ -1009,79 +1010,88 @@ function WeComPanel({ config, onChange }: WeComPanelProps) {
   );
   return (
     <>
-      <Section title={t('wecom.credentials')} description={t('wecom.credentialsDesc')}>
+      <Section title={t(`${i18nKey}.credentials`)} description={t(`${i18nKey}.credentialsDesc`)}>
         <GuideDownloadButton
           href={WECOM_GUIDE_PDF_URL}
           download={WECOM_GUIDE_PDF_FILENAME}
-          label={t('wecom.downloadGuide')}
+          label={t(`${i18nKey}.downloadGuide`)}
         />
-        <FieldRow label="Bot ID" required hint={t('wecom.botIdHint')}>
+        <FieldRow label="Bot ID" required hint={t(`${i18nKey}.botIdHint`)}>
           <TextInput
             value={config.botId ?? ''}
             onChange={(v) => set('botId', v || undefined)}
             placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxx"
           />
         </FieldRow>
-        <FieldRow label="Secret" required hint={t('wecom.secretHint')}>
+        <FieldRow label="Secret" required hint={t(`${i18nKey}.secretHint`)}>
           <SecretInput
             value={config.secret ?? ''}
             onChange={(v) => set('secret', v || undefined)}
             placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxx"
           />
         </FieldRow>
-        <FieldRow label={t('wecom.websocketUrl')} hint={t('wecom.websocketUrlHint')}>
+        <FieldRow label={t(`${i18nKey}.websocketUrl`)} hint={t(`${i18nKey}.websocketUrlHint`)}>
           <TextInput
             value={config.websocketUrl ?? ''}
             onChange={(v) => set('websocketUrl', v || undefined)}
-            placeholder={t('wecom.websocketUrlPlaceholder')}
+            placeholder={t(`${i18nKey}.websocketUrlPlaceholder`)}
           />
         </FieldRow>
       </Section>
 
-      <Section title={t('wecom.behavior')} description={t('wecom.behaviorDesc')} defaultOpen={false}>
-        <FieldRow label={t('wecom.defaultAgent')} hint={t('wecom.defaultAgentHint')}>
+      <Section title={t(`${i18nKey}.behavior`)} description={t(`${i18nKey}.behaviorDesc`)} defaultOpen={false}>
+        <FieldRow label={t(`${i18nKey}.defaultAgent`)} hint={t(`${i18nKey}.defaultAgentHint`)}>
           <TextInput
             value={config.defaultAgent ?? ''}
             onChange={(v) => set('defaultAgent', v || undefined)}
-            placeholder={t('wecom.optional')}
+            placeholder={t(`${i18nKey}.optional`)}
           />
         </FieldRow>
-        <FieldRow label={t('wecom.groupTrigger')} hint={t('wecom.groupTriggerHint')}>
+        <FieldRow label={t(`${i18nKey}.groupTrigger`)} hint={t(`${i18nKey}.groupTriggerHint`)}>
           <span className="inline-block px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-md bg-gray-50">
-            {t('wecom.triggerMention')}
+            {t(`${i18nKey}.triggerMention`)}
           </span>
         </FieldRow>
-        <FieldRow label={t('wecom.allowFrom')} hint={t('wecom.allowFromHint')}>
+        <FieldRow label={t(`${i18nKey}.allowFrom`)} hint={t(`${i18nKey}.allowFromHint`)}>
           <TagsInput
             value={config.allowFrom ?? []}
             onChange={(v) => set('allowFrom', v.length ? v : undefined)}
-            placeholder={t('wecom.allowFromPlaceholder')}
+            placeholder={t(`${i18nKey}.allowFromPlaceholder`)}
           />
         </FieldRow>
       </Section>
 
-      <Section title={t('wecom.advanced')} description={t('wecom.advancedDesc')} defaultOpen={false}>
-        <FieldRow label={t('wecom.textChunkLimit')} hint={t('wecom.textChunkLimitHint')}>
+      <Section title={t(`${i18nKey}.advanced`)} description={t(`${i18nKey}.advancedDesc`)} defaultOpen={false}>
+        <FieldRow label={t(`${i18nKey}.textChunkLimit`)} hint={t(`${i18nKey}.textChunkLimitHint`)}>
           <NumberInput
             value={config.textChunkLimit ?? 4000}
             onChange={(v) => set('textChunkLimit', v)}
             min={1}
           />
         </FieldRow>
-        <FieldRow label={t('wecom.rateLimit')} hint={t('wecom.rateLimitHint')}>
+        <FieldRow label={t(`${i18nKey}.rateLimit`)} hint={t(`${i18nKey}.rateLimitHint`)}>
           <NumberInput
             value={config.rateLimit ?? 20}
             onChange={(v) => set('rateLimit', v)}
             min={1}
           />
         </FieldRow>
-        <FieldRow label={t('wecom.rateBurst')} hint={t('wecom.rateBurstHint')}>
+        <FieldRow label={t(`${i18nKey}.rateBurst`)} hint={t(`${i18nKey}.rateBurstHint`)}>
           <NumberInput
             value={config.rateBurst ?? 5}
             onChange={(v) => set('rateBurst', v)}
             min={1}
           />
         </FieldRow>
+        {i18nKey === 'wecom_new' ? (
+          <FieldRow label={t('wecom_new.slowTaskDelaySeconds')} hint={t('wecom_new.slowTaskDelaySecondsHint')}>
+            <NumberInput
+              value={(config as WeComChannelConfig & { slowTaskDelaySeconds?: number }).slowTaskDelaySeconds ?? 30}
+              onChange={(v) => set('slowTaskDelaySeconds' as keyof WeComChannelConfig, v as WeComChannelConfig[keyof WeComChannelConfig])}
+              min={1}
+            />
+          </FieldRow>
+        ) : null}
       </Section>
     </>
   );
@@ -1571,7 +1581,7 @@ export default function ChannelPage() {
         const saved = cfg.channels?.[ch.id] ?? {};
         if (ch.id === 'feishu') {
           configs[ch.id] = { ...defaultFeishuConfig(), ...saved };
-        } else if (ch.id === 'wecom') {
+        } else if (ch.id === 'wecom' || ch.id === 'wecom_new') {
           const wecomCfg = { ...defaultWeComConfig(), ...saved };
           if (wecomCfg.groupTrigger && wecomCfg.groupTrigger !== 'mention') {
             wecomCfg.groupTrigger = 'mention';
@@ -1845,6 +1855,13 @@ export default function ChannelPage() {
                     <WeComPanel
                       config={selectedConfig as WeComChannelConfig}
                       onChange={(cfg) => handleChannelConfigChange('wecom', cfg)}
+                    />
+                  )}
+                  {selectedId === 'wecom_new' && (
+                    <WeComPanel
+                      config={selectedConfig as WeComChannelConfig}
+                      onChange={(cfg) => handleChannelConfigChange('wecom_new', cfg)}
+                      i18nKey="wecom_new"
                     />
                   )}
                   {selectedId === 'dingtalk' && (

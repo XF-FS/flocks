@@ -12,13 +12,14 @@ InputSourceType = Literal[
     "channel",
     "feishu",
     "wecom",
+    "wecom_new",
     "telegram",
 ]
 
 
 def surface_for_source(source_type: str) -> CommandSurface:
     """Map a transport/source type onto a command surface."""
-    if source_type in {"feishu", "wecom", "telegram", "channel"}:
+    if source_type in {"feishu", "wecom", "wecom_new", "telegram", "channel"}:
         return "channel"
     if source_type in {"webui", "tui", "cli", "acp"}:
         return source_type

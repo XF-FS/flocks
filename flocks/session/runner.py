@@ -1229,6 +1229,7 @@ Please address this message and continue with your tasks.
             _CHANNEL_NAMES = {
                 "feishu": "Feishu (飞书)",
                 "wecom": "WeCom (企业微信)",
+                "wecom_new": "WeCom_new",
                 "dingtalk": "DingTalk (钉钉)",
             }
 

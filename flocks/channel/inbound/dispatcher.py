@@ -961,10 +961,16 @@ class InboundDispatcher:
     ) -> None:
         from flocks.session.message import FilePart, Message, MessageRole
 
+        attachment_messages = InboundDispatcher._expand_channel_media_messages(msg)
+        attachment_hint_text = InboundDispatcher._build_attachment_hint_text(msg)
+        message_text = text
+        if attachment_hint_text and InboundDispatcher._should_replace_attachment_placeholder(msg, text):
+            message_text = attachment_hint_text
+
         create_kwargs: dict = dict(
             session_id=session_id,
             role=MessageRole.USER,
-            content=text,
+            content=message_text,
             part_metadata={
                 "source": "channel",
                 "channel_id": msg.channel_id,
@@ -980,25 +986,33 @@ class InboundDispatcher:
 
         message = await Message.create(**create_kwargs)
 
-        if not msg.media_url or channel_config is None:
+        if channel_config is None:
             return
 
         raw_cfg = channel_config.model_dump(by_alias=True, exclude_none=True)
+        if not attachment_messages:
+            return
 
         try:
-            media = await _download_channel_media(msg, raw_cfg)
-            if not media:
-                return
+            stored_media = []
+            for attachment_msg in attachment_messages:
+                media = await _download_channel_media(attachment_msg, raw_cfg)
+                if not media:
+                    continue
 
-            file_part = FilePart(
-                sessionID=session_id,
-                messageID=message.id,
-                mime=media.mime,
-                filename=media.filename,
-                url=media.url,
-                source=media.source,
-            )
-            await Message.store_part(session_id, message.id, file_part)
+                file_part = FilePart(
+                    sessionID=session_id,
+                    messageID=message.id,
+                    mime=media.mime,
+                    filename=media.filename,
+                    url=media.url,
+                    source=media.source,
+                )
+                await Message.store_part(session_id, message.id, file_part)
+                stored_media.append((media, file_part))
+
+            if not stored_media:
+                return
 
             try:
                 from flocks.session.message import TextPart
@@ -1009,12 +1023,10 @@ class InboundDispatcher:
                         or p.text.startswith("[文件消息:")
                     ):
                         from pathlib import PurePosixPath
-                        file_path_str = media.url.replace("file://", "")
-                        try:
-                            display_path = str(PurePosixPath(file_path_str))
-                        except Exception:
-                            display_path = file_path_str
-                        new_text = f"Attached files:\n- {display_path}"
+                        display_paths = InboundDispatcher._display_paths_from_media(stored_media)
+                        new_text = "Attached files:\n" + "\n".join(
+                            f"- {display_path}" for display_path in display_paths
+                        )
                         updated = TextPart(
                             id=p.id,
                             sessionID=session_id,
@@ -1023,19 +1035,28 @@ class InboundDispatcher:
                             text=new_text,
                         )
                         await Message.store_part(session_id, message.id, updated)
+                        try:
+                            from flocks.server.routes.event import publish_event
+                            await publish_event("message.part.updated", {
+                                "part": updated.model_dump(by_alias=True, exclude_none=True),
+                                "sessionID": session_id,
+                            })
+                        except Exception:
+                            pass
                         break
             except Exception:
                 pass
 
-            try:
-                from flocks.server.routes.event import publish_event
-                part_event = file_part.model_dump(by_alias=True, exclude_none=True)
-                await publish_event("message.part.updated", {
-                    "part": part_event,
-                    "sessionID": session_id,
-                })
-            except Exception:
-                pass
+            for _, file_part in stored_media:
+                try:
+                    from flocks.server.routes.event import publish_event
+                    part_event = file_part.model_dump(by_alias=True, exclude_none=True)
+                    await publish_event("message.part.updated", {
+                        "part": part_event,
+                        "sessionID": session_id,
+                    })
+                except Exception:
+                    pass
         except Exception as e:
             log.warning("dispatcher.inbound_media_download_failed", {
                 "channel_id": msg.channel_id,
@@ -1043,6 +1064,89 @@ class InboundDispatcher:
                 "media_url": msg.media_url,
                 "error": str(e),
             })
+
+    @staticmethod
+    def _expand_channel_media_messages(msg: InboundMessage) -> list[InboundMessage]:
+        if msg.channel_id != "wecom_new":
+            return [msg] if msg.media_url else []
+
+        raw = msg.raw if isinstance(msg.raw, dict) else {}
+        payload = raw.get("_wecom_new_payload") if isinstance(raw, dict) else None
+        if not isinstance(payload, dict):
+            return [msg] if msg.media_url else []
+
+        expanded: list[InboundMessage] = []
+        for attachment in payload.get("attachments", []) or []:
+            if not isinstance(attachment, dict):
+                continue
+            media_url = str(attachment.get("url", "") or "").strip()
+            if not media_url:
+                continue
+            expanded.append(InboundMessage(
+                **{
+                    **vars(msg),
+                    "media_url": media_url,
+                }
+            ))
+
+        return expanded or ([msg] if msg.media_url else [])
+
+    @staticmethod
+    def _build_attachment_hint_text(msg: InboundMessage) -> str | None:
+        attachment_messages = InboundDispatcher._expand_channel_media_messages(msg)
+        if not attachment_messages:
+            return None
+
+        lines: list[str] = []
+        raw = msg.raw if isinstance(msg.raw, dict) else {}
+        payload = raw.get("_wecom_new_payload") if isinstance(raw, dict) else None
+        attachment_map: dict[str, dict] = {}
+        if isinstance(payload, dict):
+            for item in payload.get("attachments", []) or []:
+                if isinstance(item, dict):
+                    url = str(item.get("url", "") or "").strip()
+                    if url:
+                        attachment_map[url] = item
+
+        for attachment_msg in attachment_messages:
+            attachment = attachment_map.get(attachment_msg.media_url or "", {})
+            filename = str(attachment.get("filename", "") or "").strip()
+            if filename:
+                lines.append(f"- {filename}")
+                continue
+            if attachment_msg.media_url:
+                lines.append(f"- {attachment_msg.media_url.rsplit('/', 1)[-1]}")
+
+        if not lines:
+            return None
+        return "Attached files:\n" + "\n".join(lines)
+
+    @staticmethod
+    def _should_replace_attachment_placeholder(msg: InboundMessage, text: str) -> bool:
+        if msg.channel_id != "wecom_new":
+            return False
+        normalized = (text or "").strip()
+        if not normalized:
+            return True
+        if normalized in {"[文件消息]", "[图片消息]", "[语音消息]"}:
+            return True
+        if normalized.startswith("[文件消息:") or normalized.startswith("[视频消息:"):
+            return True
+        return False
+
+    @staticmethod
+    def _display_paths_from_media(stored_media: list[tuple[Any, Any]]) -> list[str]:
+        from pathlib import PurePosixPath
+
+        display_paths: list[str] = []
+        for media, _ in stored_media:
+            file_path_str = media.url.replace("file://", "")
+            try:
+                display_path = str(PurePosixPath(file_path_str))
+            except Exception:
+                display_path = file_path_str
+            display_paths.append(display_path)
+        return display_paths
 
 
 async def _extract_message_text(
@@ -1248,6 +1352,10 @@ async def _download_channel_media(msg: InboundMessage, config: dict):
 
     if msg.channel_id == "wecom":
         from flocks.channel.builtin.wecom.inbound_media import download_inbound_media
+        return await download_inbound_media(msg, config)
+
+    if msg.channel_id == "wecom_new":
+        from flocks.channel.builtin.wecom_new.inbound_media import download_inbound_media
         return await download_inbound_media(msg, config)
 
     return None

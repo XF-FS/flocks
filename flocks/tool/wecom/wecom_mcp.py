@@ -114,9 +114,9 @@ async def _fetch_mcp_url(category: str) -> str:
         raise RuntimeError("wecom-aibot-sdk 未安装") from e
 
     from flocks.channel.registry import default_registry
-    wecom_channel = default_registry.get("wecom")
+    wecom_channel = default_registry.get("wecom_new") or default_registry.get("wecom")
     if wecom_channel is None:
-        raise RuntimeError("WeComChannel 未注册，请先在 flocks.json 中启用企业微信 channel")
+        raise RuntimeError("WeComChannel 未注册，请先启用企业微信 channel")
 
     ws_client = getattr(wecom_channel, "_ws_client", None)
     if ws_client is None:

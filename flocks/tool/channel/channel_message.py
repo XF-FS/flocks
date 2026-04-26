@@ -11,6 +11,8 @@ is bound to multiple channels.
 
 from __future__ import annotations
 
+import importlib
+
 from flocks.tool.registry import (
     ParameterType,
     ToolCategory,
@@ -22,6 +24,7 @@ from flocks.tool.registry import (
 
 _CHANNEL_ALIASES: dict[str, list[str]] = {
     "wecom": ["wecom", "企微", "企业微信", "wechat_work", "wxwork"],
+    "wecom_new": ["wecom_new", "wecomnew", "wecom-v2", "wecom_new_v2", "wecomnewv2", "WeCom_new"],
     "feishu": ["feishu", "飞书", "lark"],
     "dingtalk": ["dingtalk", "钉钉", "dingding", "dingtalk-connector"],
 }
@@ -52,7 +55,7 @@ async def _http_session_send(
     signalling the caller to fall back to the in-process path.
     """
     try:
-        import httpx
+        httpx = importlib.import_module("httpx")
 
         payload: dict = {"session_id": session_id, "text": text}
         if channel_type:
@@ -60,13 +63,17 @@ async def _http_session_send(
         if media_url:
             payload["media_url"] = media_url
 
+        timeout = 60.0 if media_url else 15.0
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"http://localhost:{port}/api/channel/session-send",
+                f"http://127.0.0.1:{port}/api/channel/session-send",
                 json=payload,
-                timeout=10.0,
+                timeout=timeout,
             )
-            body = resp.json()
+            try:
+                body = resp.json()
+            except ValueError:
+                return None
             if resp.status_code == 200:
                 return ToolResult(
                     success=True,
@@ -84,8 +91,10 @@ async def _http_session_send(
         return None
     except (httpx.ConnectError, httpx.ConnectTimeout):
         return None  # server not running — fall back to in-process path
+    except httpx.TimeoutException as e:
+        return ToolResult(success=False, error=f"HTTP send timed out after {timeout:.0f}s: {type(e).__name__}")
     except Exception as e:
-        return ToolResult(success=False, error=f"HTTP send failed: {e}")
+        return ToolResult(success=False, error=f"HTTP send failed: {type(e).__name__}: {e!s}")
 
 
 @ToolRegistry.register_function(
@@ -113,9 +122,9 @@ async def _http_session_send(
             name="channel_type",
             type=ParameterType.STRING,
             required=False,
-            enum=["wecom", "feishu", "dingtalk", "企微", "飞书", "钉钉"],
+            enum=["wecom", "wecom_new", "feishu", "dingtalk", "企微", "飞书", "钉钉"],
             description=(
-                "Target channel: wecom, feishu, or dingtalk. "
+                "Target channel: wecom, wecom_new, feishu, or dingtalk. "
                 "Chinese aliases are accepted. "
                 "If omitted and the session has only one binding, that channel is used automatically. "
                 "If omitted and the session has multiple bindings, the message is sent to all of them."
@@ -140,7 +149,12 @@ async def channel_message(ctx: ToolContext, **kwargs) -> ToolResult:
     try:
         from flocks.config import Config
         cfg = await Config.get()
-        port = getattr(cfg, "port", None) or 8000
+        server_cfg = getattr(cfg, "server", None)
+        port = (
+            getattr(cfg, "port", None)
+            or getattr(server_cfg, "port", None)
+            or 8000
+        )
     except Exception:
         port = 8000
 
@@ -154,8 +168,7 @@ async def channel_message(ctx: ToolContext, **kwargs) -> ToolResult:
     from flocks.channel.base import OutboundContext
 
     svc = SessionBindingService()
-    all_bindings = await svc.list_bindings()
-    matched = [b for b in all_bindings if b.session_id == session_id]
+    matched = await svc.get_bindings_by_session(session_id)
 
     if not matched:
         return ToolResult(

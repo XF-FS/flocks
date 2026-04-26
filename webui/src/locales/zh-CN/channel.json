@@ -5,11 +5,13 @@
   "cardDesc": "配置 IM 机器人接入，让 AI Agent 能够在飞书、企业微信等平台上接收和发送消息。",
   "tabs": {
     "feishu": "飞书",
-    "wecom": "企业微信"
+    "wecom": "企业微信",
+    "wecom_new": "WeCom_new"
   },
   "channelName": {
     "feishu": "飞书",
     "wecom": "企业微信",
+    "wecom_new": "WeCom_new",
     "dingtalk": "钉钉",
     "telegram": "Telegram"
   },
@@ -164,6 +166,39 @@
     "rateLimitHint": "每秒最多发送的消息条数（默认 20）",
     "rateBurst": "突发流量上限",
     "rateBurstHint": "允许的突发消息数量上限（默认 5）"
+  },
+  "wecom_new": {
+    "enableTitle": "启用 WeCom_new 通道",
+    "enableDesc": "启用后，机器人将通过 WebSocket 长连接接入企业微信，并启用 v2 入站解析与状态反馈能力。",
+    "credentials": "机器人凭证",
+    "credentialsDesc": "在企业微信管理后台创建应用机器人后填写。",
+    "downloadGuide": "下载配置指引",
+    "botIdHint": "企业微信应用机器人的 Bot ID",
+    "secretHint": "企业微信应用机器人的 Secret",
+    "websocketUrl": "WebSocket 地址",
+    "websocketUrlHint": "自定义 WebSocket 服务地址（留空使用默认 wss://openws.work.weixin.qq.com）",
+    "websocketUrlPlaceholder": "留空使用默认值",
+    "optional": "选填",
+    "behavior": "消息行为",
+    "behaviorDesc": "配置消息路由、附件处理与 IM 风格反馈行为。",
+    "defaultAgent": "默认 Agent",
+    "defaultAgentHint": "未指定 Agent 时使用的默认 Agent ID",
+    "groupTrigger": "群聊触发方式",
+    "groupTriggerHint": "企业微信平台仅在群成员 @ 机器人时才推送消息，因此群聊固定为 @ 提及触发",
+    "triggerMention": "仅 @ 提及时触发（平台限制）",
+    "allowFrom": "允许的用户",
+    "allowFromHint": "仅允许这些用户 ID 触发 Agent（留空则允许所有人）",
+    "allowFromPlaceholder": "输入用户 ID 后按回车添加",
+    "advanced": "高级设置",
+    "advancedDesc": "消息长度限制、发送速率与慢任务提示控制。",
+    "textChunkLimit": "消息分块长度",
+    "textChunkLimitHint": "单条消息的最大字符数，超出会自动分块发送（默认 4000）",
+    "rateLimit": "发送速率限制 (条/秒)",
+    "rateLimitHint": "每秒最多发送的消息条数（默认 20）",
+    "rateBurst": "突发流量上限",
+    "rateBurstHint": "允许的突发消息数量上限（默认 5）",
+    "slowTaskDelaySeconds": "慢任务提醒延迟 (秒)",
+    "slowTaskDelaySecondsHint": "超过该时长仍未完成时，向用户发送一次“任务正在处理中”提示（默认 30）"
   },
   "dingtalk": {
     "enableTitle": "启用钉钉通道",

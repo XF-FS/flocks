@@ -700,6 +700,230 @@ class TestFeishuNativeCommands:
         assert stored_part.mime == "image/png"
         assert stored_part.url == "file:///tmp/diagram.png"
 
+    @pytest.mark.asyncio
+    async def test_append_user_message_stores_wecom_media_part(self, monkeypatch):
+        from flocks.channel.inbound.dispatcher import InboundDispatcher
+        from flocks.config.config import ChannelConfig
+        from flocks.session.message import TextPart
+
+        created_message = SimpleNamespace(id="message_user_1")
+        store_part = AsyncMock()
+        published = []
+
+        monkeypatch.setattr(
+            "flocks.session.message.Message.create",
+            AsyncMock(return_value=created_message),
+        )
+        monkeypatch.setattr(
+            "flocks.session.message.Message.store_part",
+            store_part,
+        )
+        monkeypatch.setattr(
+            "flocks.session.message.Message.parts",
+            AsyncMock(
+                return_value=[
+                    TextPart(
+                        id="part_text_1",
+                        sessionID="session_1",
+                        messageID="message_user_1",
+                        text="[文件消息: report.pdf]",
+                    )
+                ]
+            ),
+        )
+        monkeypatch.setattr(
+            "flocks.channel.builtin.wecom.inbound_media.download_inbound_media",
+            AsyncMock(
+                return_value=SimpleNamespace(
+                    filename="report.pdf",
+                    mime="application/pdf",
+                    url="file:///tmp/report.pdf",
+                    source={"channel": "wecom"},
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            "flocks.server.routes.event.publish_event",
+            AsyncMock(side_effect=lambda event, data: published.append((event, data))),
+        )
+
+        await InboundDispatcher._append_user_message(
+            "session_1",
+            "[文件消息: report.pdf]",
+            InboundMessage(
+                channel_id="wecom",
+                account_id="default",
+                message_id="wx_1",
+                sender_id="wx_user",
+                chat_id="wx_user",
+                chat_type=ChatType.DIRECT,
+                media_url="https://example.com/report.pdf",
+            ),
+            ChannelConfig(enabled=True, botId="bot-id", secret="secret"),
+        )
+
+        store_part.assert_awaited()
+        stored_part = store_part.await_args_list[0].args[2]
+        assert stored_part.type == "file"
+        assert stored_part.filename == "report.pdf"
+        assert stored_part.mime == "application/pdf"
+        assert stored_part.url == "file:///tmp/report.pdf"
+        assert store_part.await_args_list[1].args[2].type == "text"
+        assert store_part.await_args_list[1].args[2].text == "Attached files:\n- /tmp/report.pdf"
+        assert [event for event, _ in published] == [
+            "message.part.updated",
+            "message.part.updated",
+        ]
+        assert published[0][1]["part"]["type"] == "text"
+        assert published[1][1]["part"]["type"] == "file"
+
+    @pytest.mark.asyncio
+    async def test_append_user_message_stores_multiple_wecom_new_media_parts(self, monkeypatch):
+        from flocks.channel.inbound.dispatcher import InboundDispatcher
+        from flocks.config.config import ChannelConfig
+        from flocks.session.message import TextPart
+
+        created_message = SimpleNamespace(id="message_user_2")
+        store_part = AsyncMock()
+        published = []
+
+        monkeypatch.setattr(
+            "flocks.session.message.Message.create",
+            AsyncMock(return_value=created_message),
+        )
+        monkeypatch.setattr(
+            "flocks.session.message.Message.store_part",
+            store_part,
+        )
+        monkeypatch.setattr(
+            "flocks.session.message.Message.parts",
+            AsyncMock(
+                return_value=[
+                    TextPart(
+                        id="part_text_2",
+                        sessionID="session_2",
+                        messageID="message_user_2",
+                        text="[文件消息]",
+                    )
+                ]
+            ),
+        )
+
+        async def _download(msg, _config):
+            suffix = msg.media_url.rsplit("/", 1)[-1]
+            return SimpleNamespace(
+                filename=suffix,
+                mime="application/octet-stream",
+                url=f"file:///tmp/{suffix}",
+                source={"channel": "wecom_new", "media_url": msg.media_url},
+            )
+
+        monkeypatch.setattr(
+            "flocks.channel.builtin.wecom.inbound_media.download_inbound_media",
+            AsyncMock(side_effect=_download),
+        )
+        monkeypatch.setattr(
+            "flocks.server.routes.event.publish_event",
+            AsyncMock(side_effect=lambda event, data: published.append((event, data))),
+        )
+
+        await InboundDispatcher._append_user_message(
+            "session_2",
+            "[文件消息]",
+            InboundMessage(
+                channel_id="wecom_new",
+                account_id="default",
+                message_id="wx_new_1",
+                sender_id="wx_user",
+                chat_id="wx_user",
+                chat_type=ChatType.DIRECT,
+                media_url="https://example.com/a.pdf",
+                raw={
+                    "_wecom_new_payload": {
+                        "attachments": [
+                            {
+                                "kind": "file",
+                                "url": "https://example.com/a.pdf",
+                                "aes_key": "k1",
+                                "filename": "a.pdf",
+                            },
+                            {
+                                "kind": "file",
+                                "url": "https://example.com/b.pdf",
+                                "aes_key": "k2",
+                                "filename": "b.pdf",
+                            },
+                        ]
+                    }
+                },
+            ),
+            ChannelConfig(enabled=True, botId="bot-id", secret="secret"),
+        )
+
+        assert len(store_part.await_args_list) == 3
+        assert store_part.await_args_list[0].args[2].type == "file"
+        assert store_part.await_args_list[0].args[2].filename == "a.pdf"
+        assert store_part.await_args_list[1].args[2].type == "file"
+        assert store_part.await_args_list[1].args[2].filename == "b.pdf"
+        assert store_part.await_args_list[2].args[2].type == "text"
+        assert store_part.await_args_list[2].args[2].text == "Attached files:\n- /tmp/a.pdf\n- /tmp/b.pdf"
+        assert [event for event, _ in published] == [
+            "message.part.updated",
+            "message.part.updated",
+            "message.part.updated",
+        ]
+        assert published[0][1]["part"]["type"] == "text"
+        assert published[1][1]["part"]["type"] == "file"
+        assert published[2][1]["part"]["type"] == "file"
+
+    def test_build_attachment_hint_text_for_wecom_new(self):
+        from flocks.channel.inbound.dispatcher import InboundDispatcher
+
+        msg = InboundMessage(
+            channel_id="wecom_new",
+            account_id="default",
+            message_id="wx_new_2",
+            sender_id="wx_user",
+            chat_id="wx_user",
+            chat_type=ChatType.DIRECT,
+            media_url="https://example.com/a.pdf",
+            raw={
+                "_wecom_new_payload": {
+                    "attachments": [
+                        {
+                            "kind": "file",
+                            "url": "https://example.com/a.pdf",
+                            "filename": "a.pdf",
+                        },
+                        {
+                            "kind": "file",
+                            "url": "https://example.com/b.pdf",
+                            "filename": "b.pdf",
+                        },
+                    ]
+                }
+            },
+        )
+
+        assert InboundDispatcher._build_attachment_hint_text(msg) == "Attached files:\n- a.pdf\n- b.pdf"
+
+    def test_should_replace_attachment_placeholder_for_wecom_new(self):
+        from flocks.channel.inbound.dispatcher import InboundDispatcher
+
+        msg = InboundMessage(
+            channel_id="wecom_new",
+            account_id="default",
+            message_id="wx_new_3",
+            sender_id="wx_user",
+            chat_id="wx_user",
+            chat_type=ChatType.DIRECT,
+        )
+
+        assert InboundDispatcher._should_replace_attachment_placeholder(msg, "") is True
+        assert InboundDispatcher._should_replace_attachment_placeholder(msg, "[文件消息]") is True
+        assert InboundDispatcher._should_replace_attachment_placeholder(msg, "[文件消息: a.pdf]") is True
+        assert InboundDispatcher._should_replace_attachment_placeholder(msg, "请帮我分析这两个附件") is False
+
 
 class TestMultimodalInput:
     @pytest.mark.asyncio
@@ -1095,6 +1319,80 @@ class TestOutboundDelivery:
         assert len(results) == 1
         assert results[0].success is True
         assert len(plugin._sent) == 0
+
+
+class TestChannelRoutes:
+    async def test_channel_send_accepts_message_and_media_aliases(self, monkeypatch):
+        from flocks.server.routes.channel import SendMessageRequest, channel_send
+        from flocks.channel.outbound.deliver import OutboundDelivery
+
+        captured = {}
+
+        async def fake_deliver(ctx, *, session_id=None):
+            captured["ctx"] = ctx
+            captured["session_id"] = session_id
+            return [DeliveryResult(channel_id=ctx.channel_id, message_id="msg_1")]
+
+        monkeypatch.setattr(OutboundDelivery, "deliver", staticmethod(fake_deliver))
+
+        req = SendMessageRequest.model_validate({
+            "channel_id": "wecom_new",
+            "to": "user_1",
+            "message": "发送文件",
+            "media": "/tmp/report.txt",
+            "session_id": "ses_1",
+        })
+
+        result = await channel_send(req)
+
+        assert result["ok"] is True
+        assert captured["ctx"].text == "发送文件"
+        assert captured["ctx"].media_url == "/tmp/report.txt"
+        assert captured["session_id"] == "ses_1"
+
+    async def test_channel_session_send_accepts_message_and_media_aliases(self, monkeypatch):
+        from flocks.server.routes.channel import SessionSendRequest, channel_session_send
+        from flocks.channel.inbound.session_binding import SessionBindingService
+        from flocks.channel.outbound.deliver import OutboundDelivery
+
+        captured = {}
+
+        async def fake_get_bindings_by_session(_self, session_id):
+            assert session_id == "ses_1"
+            return [
+                SimpleNamespace(
+                    channel_id="wecom_new",
+                    account_id="default",
+                    chat_id="user_1",
+                )
+            ]
+
+        async def fake_deliver(ctx, *, session_id=None):
+            captured["ctx"] = ctx
+            captured["session_id"] = session_id
+            return [DeliveryResult(channel_id=ctx.channel_id, message_id="msg_1")]
+
+        monkeypatch.setattr(
+            SessionBindingService,
+            "get_bindings_by_session",
+            fake_get_bindings_by_session,
+        )
+        monkeypatch.setattr(OutboundDelivery, "deliver", staticmethod(fake_deliver))
+
+        req = SessionSendRequest.model_validate({
+            "session_id": "ses_1",
+            "message": "发送文件",
+            "media": "/tmp/report.txt",
+            "channel_type": "wecom_new",
+        })
+
+        result = await channel_session_send(req)
+
+        assert result["ok"] is True
+        assert captured["ctx"].channel_id == "wecom_new"
+        assert captured["ctx"].text == "发送文件"
+        assert captured["ctx"].media_url == "/tmp/report.txt"
+        assert captured["session_id"] == "ses_1"
 
 
 # =====================================================================

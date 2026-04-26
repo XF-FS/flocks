@@ -13,17 +13,23 @@ import mimetypes
 import os
 import re
 import datetime
+import importlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-from urllib.parse import urlparse
+from typing import Any, Optional
+from urllib.parse import unquote, urlparse
 
 from flocks.channel.base import InboundMessage
 from flocks.utils.log import Log
+from flocks.workspace.manager import WorkspaceManager
 
 log = Log.create(service="channel.wecom.media")
 
 _DEFAULT_MAX_INBOUND_MEDIA_BYTES = 30 * 1024 * 1024
+
+
+class WeComInboundMediaTooLarge(ValueError):
+    """企微入站媒体超过允许大小。"""
 
 
 @dataclass
@@ -35,11 +41,11 @@ class DownloadedInboundMedia:
 
 
 def _media_storage_dir(account_id: str) -> Path:
+    workspace = WorkspaceManager.get_instance()
+    workspace.ensure_dirs()
     return (
-        Path.home()
-        / ".flocks"
-        / "data"
-        / "channel_media"
+        workspace.get_workspace_dir()
+        / "uploads"
         / "wecom"
         / account_id
         / datetime.date.today().isoformat()
@@ -47,7 +53,10 @@ def _media_storage_dir(account_id: str) -> Path:
 
 
 def _sanitize_filename(name: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip())
+    cleaned = name.strip().replace("/", "_").replace("\\", "_")
+    cleaned = re.sub(r"[\x00-\x1f\x7f]+", "_", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned.strip(" .")
     return cleaned[:120] or "attachment"
 
 
@@ -58,9 +67,33 @@ def _guess_mime_from_ext(filename: str) -> Optional[str]:
     return None
 
 
+def _filename_from_content_disposition(value: str) -> Optional[str]:
+    match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', value, re.I)
+    if not match:
+        return None
+    return unquote(match.group(1).strip())
+
+
+def _max_size_error(max_bytes: int) -> ValueError:
+    return WeComInboundMediaTooLarge(
+        f"WeCom inbound media too large: >{max_bytes // (1024 * 1024)}MB"
+    )
+
+
 def _guess_filename(msg: InboundMessage, media_url: str, cd_filename: Optional[str] = None) -> str:
     raw_body = msg.raw if isinstance(msg.raw, dict) else {}
+    structured_payload = raw_body.get("_wecom_new_payload") if isinstance(raw_body, dict) else None
     msg_type = raw_body.get("msgtype", "")
+
+    if isinstance(structured_payload, dict):
+        for item in structured_payload.get("attachments", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("url") != media_url:
+                continue
+            raw_name = str(item.get("filename", "") or "").strip()
+            if raw_name:
+                return _sanitize_filename(raw_name)
 
     if msg_type == "file":
         raw_name = str(raw_body.get("file", {}).get("filename", "") or "").strip()
@@ -71,6 +104,18 @@ def _guess_filename(msg: InboundMessage, media_url: str, cd_filename: Optional[s
         raw_name = str(raw_body.get("image", {}).get("filename", "") or "").strip()
         if raw_name:
             return _sanitize_filename(raw_name)
+
+    if msg_type == "mixed":
+        for item in raw_body.get("mixed", {}).get("msg_item", []):
+            item_type = item.get("msgtype", "")
+            if item_type == "file":
+                raw_name = str(item.get("file", {}).get("filename", "") or "").strip()
+                if raw_name:
+                    return _sanitize_filename(raw_name)
+            if item_type == "image":
+                raw_name = str(item.get("image", {}).get("filename", "") or "").strip()
+                if raw_name:
+                    return _sanitize_filename(raw_name)
 
     if cd_filename:
         return _sanitize_filename(cd_filename)
@@ -87,13 +132,89 @@ def _guess_filename(msg: InboundMessage, media_url: str, cd_filename: Optional[s
 
 def _extract_aes_key(msg: InboundMessage) -> Optional[str]:
     raw_body = msg.raw if isinstance(msg.raw, dict) else {}
+    structured_payload = raw_body.get("_wecom_new_payload") if isinstance(raw_body, dict) else None
     msg_type = raw_body.get("msgtype", "")
+
+    if isinstance(structured_payload, dict):
+        target_url = getattr(msg, "media_url", None)
+        for item in structured_payload.get("attachments", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if target_url and item.get("url") != target_url:
+                continue
+            key = str(item.get("aes_key", "") or "").strip()
+            if key:
+                return key
 
     if msg_type == "file":
         return str(raw_body.get("file", {}).get("aeskey", "") or "").strip() or None
     if msg_type == "image":
         return str(raw_body.get("image", {}).get("aeskey", "") or "").strip() or None
+    if msg_type == "mixed":
+        for item in raw_body.get("mixed", {}).get("msg_item", []):
+            item_type = item.get("msgtype", "")
+            if item_type == "file":
+                key = str(item.get("file", {}).get("aeskey", "") or "").strip()
+                if key:
+                    return key
+            if item_type == "image":
+                key = str(item.get("image", {}).get("aeskey", "") or "").strip()
+                if key:
+                    return key
     return None
+
+
+async def _close_api_client(api_client: Any) -> None:
+    client = getattr(api_client, "_client", None)
+    close = getattr(client, "aclose", None)
+    if close:
+        try:
+            await close()
+        except Exception as e:
+            log.warning("wecom.media.client_close_failed", {"error": str(e)})
+
+
+async def _download_file_limited(
+    api_client: Any,
+    media_url: str,
+    max_bytes: int,
+) -> tuple[bytes, Optional[str]]:
+    client = getattr(api_client, "_client", None)
+    stream = getattr(client, "stream", None)
+    if callable(stream):
+        chunks: list[bytes] = []
+        total = 0
+        filename: Optional[str] = None
+        async with stream("GET", media_url) as resp:
+            if hasattr(resp, "raise_for_status"):
+                resp.raise_for_status()
+            headers = getattr(resp, "headers", {}) or {}
+            content_length = headers.get("content-length") or headers.get("Content-Length")
+            if content_length:
+                try:
+                    if int(content_length) > max_bytes:
+                        raise _max_size_error(max_bytes)
+                except ValueError as e:
+                    if "invalid literal" not in str(e):
+                        raise
+            content_disposition = (
+                headers.get("content-disposition")
+                or headers.get("Content-Disposition")
+                or ""
+            )
+            filename = _filename_from_content_disposition(content_disposition)
+            async for chunk in resp.aiter_bytes(8192):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise _max_size_error(max_bytes)
+                chunks.append(chunk)
+        return b"".join(chunks), filename
+
+    result = await api_client.download_file_raw(media_url)
+    buffer: bytes = result["buffer"]
+    if len(buffer) > max_bytes:
+        raise _max_size_error(max_bytes)
+    return buffer, result.get("filename")
 
 
 async def download_inbound_media(
@@ -108,32 +229,52 @@ async def download_inbound_media(
 
     aes_key = _extract_aes_key(msg)
 
+    api_client = None
     try:
-        from wecom_aibot_sdk import WeComApiClient, decrypt_file
-        api_client = WeComApiClient(log, timeout=30000)
-        result = await api_client.download_file_raw(media_url)
-        buffer: bytes = result["buffer"]
-        cd_filename: Optional[str] = result.get("filename")
-        await api_client._client.aclose()
+        sdk = importlib.import_module("wecom_aibot_sdk")
+        api_client = sdk.WeComApiClient(log, timeout=30000)
+        buffer, cd_filename = await _download_file_limited(
+            api_client,
+            media_url,
+            max_bytes,
+        )
 
         if aes_key:
-            buffer = decrypt_file(buffer, aes_key)
+            try:
+                buffer = sdk.decrypt_file(buffer, aes_key)
+            except Exception as e:
+                log.warning("wecom.media.decrypt_failed", {
+                    "url": media_url[:200],
+                    "message_id": msg.message_id,
+                    "error": str(e),
+                })
+                return None
+            if len(buffer) > max_bytes:
+                raise _max_size_error(max_bytes)
 
     except ImportError:
         log.warning("wecom.media.sdk_not_available")
         return None
 
-    except Exception as e:
-        log.warning("wecom.media.download_failed", {
+    except WeComInboundMediaTooLarge as e:
+        log.warning("wecom.media.file_too_large", {
             "url": media_url[:200],
+            "message_id": msg.message_id,
             "error": str(e),
         })
         return None
 
-    if len(buffer) > max_bytes:
-        raise ValueError(
-            f"WeCom inbound media too large: >{max_bytes // (1024 * 1024)}MB"
-        )
+    except Exception as e:
+        log.warning("wecom.media.download_failed", {
+            "url": media_url[:200],
+            "message_id": msg.message_id,
+            "error": str(e),
+        })
+        return None
+
+    finally:
+        if api_client is not None:
+            await _close_api_client(api_client)
 
     filename = _guess_filename(msg, media_url, cd_filename)
 
@@ -156,7 +297,7 @@ async def download_inbound_media(
         mime=mime,
         url=file_path.resolve().as_uri(),
         source={
-            "channel": "wecom",
+            "channel": msg.channel_id,
             "account_id": msg.account_id,
             "message_id": msg.message_id,
             "media_url": msg.media_url,

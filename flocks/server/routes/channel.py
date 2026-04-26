@@ -4,11 +4,11 @@ Channel HTTP routes: webhook callbacks, health/status, and outbound send APIs.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 from flocks.channel.gateway.manager import default_manager
 from flocks.channel.registry import default_registry
@@ -18,21 +18,218 @@ router = APIRouter()
 log = Log.create(service="channel.routes")
 
 
+def _normalize_channel_type(channel_type: str | None) -> str | None:
+    if not channel_type:
+        return None
+    lower = channel_type.strip().lower()
+    aliases = {
+        "wecomnew": "wecom_new",
+        "wecom_new": "wecom_new",
+        "wecom-v2": "wecom_new",
+        "wecomnewv2": "wecom_new",
+        "wecom": "wecom",
+        "wechat_work": "wecom",
+        "wxwork": "wecom",
+    }
+    return aliases.get(lower, lower)
+
+
 class SendMessageRequest(BaseModel):
     channel_id: str
     to: str
-    text: str
+    text: str = Field("", validation_alias=AliasChoices("text", "message"))
     account_id: Optional[str] = None
-    media_url: Optional[str] = None
+    media_url: Optional[str] = Field(None, validation_alias=AliasChoices("media_url", "media"))
     reply_to_id: Optional[str] = None
     session_id: Optional[str] = None
 
 
 class SessionSendRequest(BaseModel):
     session_id: str
-    text: str
+    text: str = Field("", validation_alias=AliasChoices("text", "message"))
     channel_type: Optional[str] = None
-    media_url: Optional[str] = None
+    media_url: Optional[str] = Field(None, validation_alias=AliasChoices("media_url", "media"))
+
+
+class OpenClawDispatchRequest(BaseModel):
+    ctx: dict[str, Any]
+    cfg: dict[str, Any] = Field(default_factory=dict)
+
+
+class _OpenClawCollectCallbacks:
+    def __init__(self) -> None:
+        self.replies: list[dict[str, Any]] = []
+
+    async def on_step_end(self, step: int) -> None:
+        return None
+
+    async def on_error(self, error_msg: str) -> None:
+        await self.deliver_text(f"⚠ 处理消息时出错：{error_msg}")
+
+    async def deliver_text(self, text: str) -> None:
+        if text:
+            self.replies.append({"text": text})
+
+    async def deliver_media(self, media_url: str, text: str = "") -> None:
+        if media_url:
+            self.replies.append({"text": text, "mediaUrl": media_url})
+
+    def to_loop_callbacks(self, runner_callbacks=None):
+        from flocks.session.session_loop import LoopCallbacks
+        return LoopCallbacks(
+            on_step_end=self.on_step_end,
+            on_error=self.on_error,
+            runner_callbacks=runner_callbacks,
+        )
+
+
+def _strip_wecom_target(raw: Any) -> str:
+    value = str(raw or "").strip()
+    for prefix in ("wecom:group:", "wecom:user:", "wecom:"):
+        if value.startswith(prefix):
+            return value[len(prefix):]
+    return value
+
+
+def _openclaw_ctx_to_inbound(ctx: dict[str, Any]):
+    from flocks.channel.base import ChatType, InboundMessage
+
+    chat_type_raw = str(ctx.get("ChatType") or "direct").lower()
+    chat_type = ChatType.GROUP if chat_type_raw == "group" else ChatType.DIRECT
+    chat_id = _strip_wecom_target(ctx.get("OriginatingTo") or ctx.get("To"))
+    sender_id = str(ctx.get("SenderId") or _strip_wecom_target(ctx.get("From")) or "")
+    if not chat_id:
+        chat_id = sender_id
+
+    media_paths = ctx.get("MediaPaths")
+    if not isinstance(media_paths, list):
+        media_paths = [ctx.get("MediaPath")] if ctx.get("MediaPath") else []
+    attachments = []
+    for path in media_paths:
+        if not path:
+            continue
+        url = str(path)
+        if "://" not in url:
+            url = f"file://{url}"
+        attachments.append({
+            "kind": "file",
+            "url": url,
+            "filename": url.rsplit("/", 1)[-1],
+            "mime": ctx.get("MediaType"),
+        })
+
+    raw = dict(ctx)
+    if attachments:
+        raw["_wecom_new_payload"] = {
+            "msg_type": "mixed",
+            "text": str(ctx.get("Body") or ""),
+            "attachments": attachments,
+        }
+
+    return InboundMessage(
+        channel_id="wecom_new",
+        account_id=str(ctx.get("AccountId") or "default"),
+        message_id=str(ctx.get("MessageSid") or ""),
+        sender_id=sender_id,
+        chat_id=chat_id,
+        chat_type=chat_type,
+        text=str(ctx.get("Body") or ""),
+        media_url=attachments[0]["url"] if attachments else None,
+        mentioned=chat_type is ChatType.GROUP,
+        raw=raw,
+    )
+
+
+@router.post("/wecom_new/openclaw/dispatch")
+async def wecom_new_openclaw_dispatch(req: OpenClawDispatchRequest):
+    from flocks.agent.registry import Agent
+    from flocks.channel.inbound.dispatcher import (
+        InboundDispatcher,
+        _resolve_session_model,
+    )
+    from flocks.channel.inbound.session_binding import SessionBindingService
+
+    msg = _openclaw_ctx_to_inbound(req.ctx)
+    dispatcher = InboundDispatcher()
+    channel_config = await dispatcher._get_channel_config("wecom_new")
+    default_agent = channel_config.default_agent or await Agent.default_agent()
+    binding = await SessionBindingService().resolve_or_create(
+        msg,
+        default_agent=default_agent,
+        directory=channel_config.workspace_dir,
+    )
+    lock = dispatcher._get_session_lock(binding.session_id)
+    callbacks = _OpenClawCollectCallbacks()
+
+    async with lock:
+        resolved_model = await _resolve_session_model(binding.session_id)
+        await dispatcher._append_user_message(
+            binding.session_id,
+            msg.mention_text or msg.text,
+            msg,
+            channel_config,
+            model=resolved_model,
+            agent=binding.agent_id,
+        )
+        try:
+            from flocks.session.session_loop import SessionLoop
+            result = await SessionLoop.run(
+                session_id=binding.session_id,
+                agent_name=binding.agent_id,
+                callbacks=callbacks.to_loop_callbacks(),
+            )
+            if result.last_message:
+                callbacks.replies.extend(
+                    await _extract_openclaw_message_replies(
+                        binding.session_id,
+                        result.last_message,
+                    ),
+                )
+        except Exception as e:
+            log.error("channel.openclaw_dispatch.agent_error", {
+                "session": binding.session_id,
+                "error": str(e),
+            })
+            await callbacks.on_error(f"{type(e).__name__}: {e}")
+
+    return {
+        "ok": True,
+        "sessionId": binding.session_id,
+        "replies": callbacks.replies,
+    }
+
+
+async def _extract_openclaw_message_replies(
+    session_id: str,
+    message: Any,
+) -> list[dict[str, Any]]:
+    try:
+        from flocks.session.message import Message
+        msg_id = getattr(message, "id", None)
+        if not msg_id:
+            return []
+        parts = await Message.parts(msg_id, session_id=session_id)
+        text_parts = [
+            p.text for p in parts
+            if hasattr(p, "text") and p.text and getattr(p, "type", None) == "text"
+        ]
+        replies: list[dict[str, Any]] = []
+        text = "\n".join(text_parts)
+        if text:
+            replies.append({"text": text})
+        for part in parts:
+            if getattr(part, "type", None) != "file":
+                continue
+            media_url = str(getattr(part, "url", "") or "").strip()
+            if media_url:
+                replies.append({"mediaUrl": media_url})
+        return replies
+    except Exception as e:
+        log.warning("channel.openclaw_dispatch.extract_replies_failed", {
+            "session": session_id,
+            "error": f"{type(e).__name__}: {e}",
+        })
+        return []
 
 
 @router.post("/send")
@@ -67,8 +264,8 @@ async def channel_session_send(req: SessionSendRequest):
     from flocks.channel.outbound.deliver import OutboundDelivery
 
     svc = SessionBindingService()
-    all_bindings = await svc.list_bindings()
-    matched = [b for b in all_bindings if b.session_id == req.session_id]
+    matched = await svc.get_bindings_by_session(req.session_id)
+    normalized_channel_type = _normalize_channel_type(req.channel_type)
 
     if not matched:
         raise HTTPException(
@@ -76,8 +273,8 @@ async def channel_session_send(req: SessionSendRequest):
             detail=f"未找到 session '{req.session_id}' 的渠道绑定",
         )
 
-    if req.channel_type:
-        matched = [b for b in matched if b.channel_id == req.channel_type]
+    if normalized_channel_type:
+        matched = [b for b in matched if b.channel_id == normalized_channel_type]
         if not matched:
             raise HTTPException(
                 status_code=404,

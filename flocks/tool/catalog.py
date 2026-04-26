@@ -65,7 +65,6 @@ TOOL_TAGS: Dict[str, List[str]] = {
     "plan_enter": ["planning", "mode"],
     "plan_exit": ["planning", "mode"],
     "channel_message": ["messaging", "channel"],
-    "wecom_mcp": ["enterprise", "wecom"],
 }
 
 

@@ -5,11 +5,13 @@
   "cardDesc": "Configure IM bot integrations to allow AI Agents to receive and send messages on Feishu, WeCom, and other platforms.",
   "tabs": {
     "feishu": "Feishu",
-    "wecom": "WeCom"
+    "wecom": "WeCom",
+    "wecom_new": "WeCom_new"
   },
   "channelName": {
     "feishu": "Feishu",
     "wecom": "WeCom",
+    "wecom_new": "WeCom_new",
     "dingtalk": "DingTalk",
     "telegram": "Telegram"
   },
@@ -164,6 +166,39 @@
     "rateLimitHint": "Maximum messages sent per second (default 20)",
     "rateBurst": "Burst Limit",
     "rateBurstHint": "Maximum burst message count allowed (default 5)"
+  },
+  "wecom_new": {
+    "enableTitle": "Enable WeCom_new Channel",
+    "enableDesc": "When enabled, the bot will connect to WeCom via WebSocket and use the v2 inbound parsing and status feedback flow.",
+    "credentials": "Bot Credentials",
+    "credentialsDesc": "Fill in after creating a bot application in the WeCom admin console.",
+    "downloadGuide": "Download Configuration Guide",
+    "botIdHint": "Bot ID of the WeCom application bot",
+    "secretHint": "Secret of the WeCom application bot",
+    "websocketUrl": "WebSocket URL",
+    "websocketUrlHint": "Custom WebSocket server URL (leave empty to use default wss://openws.work.weixin.qq.com)",
+    "websocketUrlPlaceholder": "Leave empty to use default",
+    "optional": "Optional",
+    "behavior": "Message Behavior",
+    "behaviorDesc": "Configure message routing, attachment handling, and IM-style feedback behavior.",
+    "defaultAgent": "Default Agent",
+    "defaultAgentHint": "Default Agent ID used when no Agent is specified",
+    "groupTrigger": "Group Trigger",
+    "groupTriggerHint": "WeCom only delivers group messages when the bot is @mentioned, so group trigger is fixed to mention-only",
+    "triggerMention": "Only when @mentioned (platform restriction)",
+    "allowFrom": "Allowed Users",
+    "allowFromHint": "Only allow these user IDs to trigger Agent (leave empty to allow everyone)",
+    "allowFromPlaceholder": "Enter user ID and press Enter to add",
+    "advanced": "Advanced Settings",
+    "advancedDesc": "Message length limit, rate control, and slow-task notification timing.",
+    "textChunkLimit": "Message Chunk Limit",
+    "textChunkLimitHint": "Maximum characters per message chunk, excess will be sent as separate messages (default 4000)",
+    "rateLimit": "Rate Limit (msg/s)",
+    "rateLimitHint": "Maximum messages sent per second (default 20)",
+    "rateBurst": "Burst Limit",
+    "rateBurstHint": "Maximum burst message count allowed (default 5)",
+    "slowTaskDelaySeconds": "Slow Task Delay (s)",
+    "slowTaskDelaySecondsHint": "If processing is not finished after this delay, send one 'task is still processing' notice to the user (default 30)"
   },
   "dingtalk": {
     "enableTitle": "Enable DingTalk Channel",
