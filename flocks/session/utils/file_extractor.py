@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,10 @@ _TEXT_EXTRACTABLE_MIMES = frozenset({
 
 _DEFAULT_MAX_CHARS = 12_000
 _DEFAULT_MAX_PAGES = 20
+_JSON_MIMES = frozenset({
+    "application/json",
+    "application/ld+json",
+})
 
 
 def read_file_part_bytes(url: str) -> Optional[bytes]:
@@ -125,7 +130,34 @@ def extract_file_text(
         return None
 
     extracted: Optional[str] = None
-    if is_text_extractable_mime(mime):
+    if mime in _JSON_MIMES or filename.lower().endswith(".json"):
+        try:
+            parsed = json.loads(data.decode("utf-8", errors="replace"))
+            if isinstance(parsed, dict):
+                keys = [str(key) for key in parsed.keys()]
+                extracted = "\n".join([
+                    "JSON top-level type: object",
+                    f"JSON top-level fields ({len(keys)}):",
+                    *[f"- {key}" for key in keys],
+                ])
+            elif isinstance(parsed, list):
+                lines = [
+                    "JSON top-level type: array",
+                    f"JSON top-level length: {len(parsed)}",
+                ]
+                if parsed and isinstance(parsed[0], dict):
+                    keys = [str(key) for key in parsed[0].keys()]
+                    lines.extend([
+                        f"First item fields ({len(keys)}):",
+                        *[f"- {key}" for key in keys],
+                    ])
+                extracted = "\n".join(lines)
+            else:
+                extracted = f"JSON top-level type: {type(parsed).__name__}"
+        except Exception as e:
+            _log.debug("extract_file_text: json summary failed: %s", e)
+            extracted = "JSON summary unavailable: failed to parse file."
+    elif is_text_extractable_mime(mime):
         decoded = data.decode("utf-8", errors="replace")
         truncated, was_truncated = truncate_extracted_text(decoded)
         if truncated:
@@ -137,7 +169,17 @@ def extract_file_text(
     if not extracted:
         return None
 
-    return "\n".join([f"[Attached file: {filename}]", "", extracted])
+    display_path = ""
+    if url.startswith("file://"):
+        parsed = urlparse(url)
+        display_path = unquote(parsed.path)
+    elif url:
+        display_path = url
+
+    header = [f"[Attached file: {filename}]"]
+    if display_path:
+        header.append(f"[Attached file path: {display_path}]")
+    return "\n".join([*header, "", extracted])
 
 
 __all__ = [

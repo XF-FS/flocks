@@ -92,12 +92,12 @@
       "regenerateFailed": "重新生成消息失败"
     },
     "upload": {
-      "select": "上传文档",
+      "select": "上传文件",
       "remove": "移除文件",
       "retry": "重试上传",
-      "dropHint": "松开以上传文档文件",
+      "dropHint": "松开以上传文件",
       "waiting": "文件上传中，请等待完成后发送",
-      "invalidType": "仅支持 txt、md、json、yaml、yml、xml、csv、pdf、doc、docx",
+      "invalidType": "文件无法上传",
       "errorGeneric": "上传失败，请重试"
     },
     "tool": {

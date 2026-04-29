@@ -5,7 +5,7 @@ Manages system prompts, context injection, and token counting.
 Based on Flocks' ported src/session/prompt.ts and src/session/system.ts
 """
 
-from typing import List, Optional, Dict, Any, Union
+from typing import TYPE_CHECKING, List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field
 import os
 from pathlib import Path
@@ -16,6 +16,9 @@ from flocks.utils.log import Log
 
 
 log = Log.create(service="session.prompt")
+
+if TYPE_CHECKING:
+    from flocks.session.features.memory import SessionMemory
 
 
 # Output token maximum
@@ -35,6 +38,13 @@ def _load_prompt_file(filename: str) -> str:
     except Exception as e:
         log.warn("prompt.load_error", {"file": filename, "error": str(e)})
     return ""
+
+
+def load_prompt_fragment(filename: str, **variables: str) -> str:
+    content = _load_prompt_file(filename)
+    for key, value in variables.items():
+        content = content.replace(f"{{{{{key}}}}}", value)
+    return content.strip()
 
 
 # Lazy-loaded prompt templates (loaded from files like Flocks)

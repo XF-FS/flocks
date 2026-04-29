@@ -1231,10 +1231,10 @@ class ToolRegistry:
                 parameters=[]
             )
             async def get_time(ctx: ToolContext) -> ToolResult:
-                from datetime import datetime
+                from datetime import datetime, timezone
                 return ToolResult(
                     success=True,
-                    output=datetime.now().isoformat()
+                    output=datetime.now(timezone.utc).astimezone().isoformat()
                 )
 
     @classmethod

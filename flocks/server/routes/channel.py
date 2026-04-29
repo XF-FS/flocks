@@ -4,6 +4,9 @@ Channel HTTP routes: webhook callbacks, health/status, and outbound send APIs.
 
 from __future__ import annotations
 
+import asyncio
+import os
+import time
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -16,6 +19,15 @@ from flocks.utils.log import Log
 
 router = APIRouter()
 log = Log.create(service="channel.routes")
+
+_WECOM_NEW_REVIEW_SCHEMA = {
+    "f04Gwj": "用户提问",
+    "fhIosl": "机器人回复",
+    "f4iZhP": "提问附件路径",
+    "f8go0U": "回复附件路径",
+    "f60SN8": "提问时间",
+    "fb7dU8": "提问人",
+}
 
 
 def _normalize_channel_type(channel_type: str | None) -> str | None:
@@ -104,17 +116,23 @@ def _openclaw_ctx_to_inbound(ctx: dict[str, Any]):
     media_paths = ctx.get("MediaPaths")
     if not isinstance(media_paths, list):
         media_paths = [ctx.get("MediaPath")] if ctx.get("MediaPath") else []
+    media_filenames = ctx.get("MediaFilenames")
+    if not isinstance(media_filenames, list):
+        media_filenames = [ctx.get("MediaFilename")] if ctx.get("MediaFilename") else []
     attachments = []
-    for path in media_paths:
+    for index, path in enumerate(media_paths):
         if not path:
             continue
         url = str(path)
         if "://" not in url:
             url = f"file://{url}"
+        filename = ""
+        if index < len(media_filenames):
+            filename = str(media_filenames[index] or "").strip()
         attachments.append({
             "kind": "file",
             "url": url,
-            "filename": url.rsplit("/", 1)[-1],
+            "filename": filename or url.rsplit("/", 1)[-1],
             "mime": ctx.get("MediaType"),
         })
 
@@ -131,6 +149,7 @@ def _openclaw_ctx_to_inbound(ctx: dict[str, Any]):
         account_id=str(ctx.get("AccountId") or "default"),
         message_id=str(ctx.get("MessageSid") or ""),
         sender_id=sender_id,
+        sender_name=str(ctx.get("SenderName") or "") or None,
         chat_id=chat_id,
         chat_type=chat_type,
         text=str(ctx.get("Body") or ""),
@@ -138,6 +157,112 @@ def _openclaw_ctx_to_inbound(ctx: dict[str, Any]):
         mentioned=chat_type is ChatType.GROUP,
         raw=raw,
     )
+
+
+def _coerce_epoch_ms(raw: Any) -> str:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return str(int(time.time() * 1000))
+    if value <= 0:
+        return str(int(time.time() * 1000))
+    if value < 10_000_000_000:
+        value *= 1000
+    return str(int(value))
+
+
+def _review_text_from_replies(replies: list[dict[str, Any]]) -> str:
+    return "\n\n".join(
+        str(reply.get("text") or "").strip()
+        for reply in replies
+        if str(reply.get("text") or "").strip()
+    )
+
+
+def _review_paths_from_values(*values: Any) -> str:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        candidates = value if isinstance(value, list) else [value]
+        for item in candidates:
+            path = str(item or "").strip()
+            if path and path not in seen:
+                seen.add(path)
+                paths.append(path)
+    return "\n".join(paths)
+
+
+def _resolve_wecom_new_review_webhook_url(channel_config: Any) -> str:
+    for key in ("reviewWebhookUrl", "reviewWebhookURL"):
+        value = channel_config.get_extra(key) if channel_config is not None else None
+        if value:
+            return str(value).strip()
+    return os.getenv("FLOCKS_WECOM_NEW_REVIEW_WEBHOOK_URL", "").strip()
+
+
+async def _post_wecom_new_review_record(
+    webhook_url: str,
+    values: dict[str, str],
+) -> None:
+    import aiohttp
+
+    payload = {
+        "schema": _WECOM_NEW_REVIEW_SCHEMA,
+        "add_records": [{"values": values}],
+    }
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(webhook_url, json=payload) as resp:
+            body = await resp.text()
+            if resp.status >= 400:
+                raise RuntimeError(f"HTTP {resp.status}: {body[:300]}")
+            try:
+                data = await resp.json(content_type=None)
+            except Exception:
+                data = {}
+            if isinstance(data, dict) and data.get("errcode") not in (None, 0):
+                raise RuntimeError(str(data))
+
+
+def _schedule_wecom_new_review_record(
+    *,
+    channel_config: Any,
+    ctx: dict[str, Any],
+    msg: Any,
+    replies: list[dict[str, Any]],
+    inbound_attachment_paths: list[str] | None = None,
+) -> None:
+    webhook_url = _resolve_wecom_new_review_webhook_url(channel_config)
+    if not webhook_url:
+        return
+
+    values = {
+        "f04Gwj": msg.mention_text or msg.text,
+        "fhIosl": _review_text_from_replies(replies),
+        "f4iZhP": _review_paths_from_values(
+            inbound_attachment_paths,
+            ctx.get("MediaPaths") if not inbound_attachment_paths else None,
+            ctx.get("MediaPath") if not inbound_attachment_paths else None,
+            ctx.get("MediaUrls") if not inbound_attachment_paths else None,
+            ctx.get("MediaUrl") if not inbound_attachment_paths else None,
+        ),
+        "f8go0U": _review_paths_from_values(
+            *[reply.get("mediaUrl") or reply.get("media_url") for reply in replies],
+        ),
+        "f60SN8": _coerce_epoch_ms(ctx.get("Timestamp") or ctx.get("CreateTime")),
+        "fb7dU8": msg.sender_name or msg.sender_id,
+    }
+
+    async def _run() -> None:
+        try:
+            await _post_wecom_new_review_record(webhook_url, values)
+        except Exception as e:
+            log.warning("channel.wecom_new.review_record_failed", {
+                "error": f"{type(e).__name__}: {e}",
+                "message_id": msg.message_id,
+            })
+
+    asyncio.create_task(_run())
 
 
 @router.post("/wecom_new/openclaw/dispatch")
@@ -148,22 +273,70 @@ async def wecom_new_openclaw_dispatch(req: OpenClawDispatchRequest):
         _resolve_session_model,
     )
     from flocks.channel.inbound.session_binding import SessionBindingService
+    from flocks.session.idle_retirement import retire_if_idle
+    from flocks.session.session import Session
 
     msg = _openclaw_ctx_to_inbound(req.ctx)
     dispatcher = InboundDispatcher()
     channel_config = await dispatcher._get_channel_config("wecom_new")
     default_agent = channel_config.default_agent or await Agent.default_agent()
-    binding = await SessionBindingService().resolve_or_create(
+    binding_service = SessionBindingService()
+    binding = await binding_service.resolve_or_create(
         msg,
         default_agent=default_agent,
         directory=channel_config.workspace_dir,
     )
+
+    bound_session = await Session.get_by_id(binding.session_id)
+    if bound_session is not None:
+        async def _schedule_idle_retirement_summary(retired_session) -> None:
+            from flocks.server.routes.session import _run_session_compaction, _schedule_background_coro
+
+            _schedule_background_coro(
+                _run_session_compaction(
+                    retired_session.id,
+                    auto=True,
+                    focus_instruction=(
+                        "Summarize this idle channel session for closure. Preserve only durable decisions, "
+                        "technical facts, user preferences, and follow-up items worth future recall."
+                    ),
+                ),
+                session_id=retired_session.id,
+                action="channel.wecom_new.idle_retirement.summary",
+            )
+
+        retirement = await retire_if_idle(
+            bound_session,
+            summary_scheduler=_schedule_idle_retirement_summary,
+            source_metadata={
+                "sourceType": "wecom_new",
+                "entrypoint": "openclaw_dispatch",
+                "accountID": msg.account_id,
+                "chatID": msg.chat_id,
+                "chatType": msg.chat_type.value,
+                "senderID": msg.sender_id,
+                "messageID": msg.message_id,
+            },
+        )
+        if retirement is not None:
+            binding = await binding_service.rebind(
+                msg,
+                retirement.active_session.id,
+                agent_id=binding.agent_id or default_agent,
+            )
+            log.info("channel.openclaw_dispatch.idle_retired", {
+                "session": retirement.retired_session.id,
+                "new_session": retirement.active_session.id,
+                "idle_ms": retirement.idle_ms,
+            })
+
     lock = dispatcher._get_session_lock(binding.session_id)
     callbacks = _OpenClawCollectCallbacks()
+    inbound_attachment_paths: list[str] = []
 
     async with lock:
         resolved_model = await _resolve_session_model(binding.session_id)
-        await dispatcher._append_user_message(
+        inbound_attachment_paths = await dispatcher._append_user_message(
             binding.session_id,
             msg.mention_text or msg.text,
             msg,
@@ -191,6 +364,14 @@ async def wecom_new_openclaw_dispatch(req: OpenClawDispatchRequest):
                 "error": str(e),
             })
             await callbacks.on_error(f"{type(e).__name__}: {e}")
+
+    _schedule_wecom_new_review_record(
+        channel_config=channel_config,
+        ctx=req.ctx,
+        msg=msg,
+        replies=callbacks.replies,
+        inbound_attachment_paths=inbound_attachment_paths,
+    )
 
     return {
         "ok": True,

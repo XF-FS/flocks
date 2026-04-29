@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import Layout from './Layout';
@@ -8,7 +8,6 @@ import Home from '@/pages/Home';
 
 const {
   catalogAPI,
-  checkUpdate,
   defaultModelAPI,
   mcpAPI,
   onboardingAPI,
@@ -19,7 +18,6 @@ const {
   catalogAPI: {
     list: vi.fn(),
   },
-  checkUpdate: vi.fn(),
   defaultModelAPI: {
     getResolved: vi.fn(),
   },
@@ -57,20 +55,11 @@ vi.mock('@/api/session', () => ({
   sessionApi,
 }));
 
-vi.mock('@/api/update', () => ({
-  checkUpdate,
-}));
-
 vi.mock('@/hooks/useStats', () => ({
   useStats,
 }));
 
 vi.mock('@/components/common/LanguageSwitcher', () => ({
-  default: () => null,
-}));
-
-vi.mock('@/components/common/UpdateModal', () => ({
-  UPDATE_DISMISSED_KEY: 'update-dismissed',
   default: () => null,
 }));
 
@@ -129,24 +118,11 @@ function renderHomeWithLayout() {
   );
 }
 
-async function flushEffects() {
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(0);
-  });
-}
-
 describe('Layout onboarding entry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
     localStorage.clear();
-
-    checkUpdate.mockResolvedValue({
-      has_update: false,
-      latest_version: null,
-      current_version: '0.2.0',
-      error: null,
-    });
 
     useStats.mockReturnValue({
       stats: {
@@ -221,49 +197,4 @@ describe('Layout onboarding entry', () => {
     expect(screen.queryByPlaceholderText('onboarding.bootstrap.tbPlaceholder')).not.toBeInTheDocument();
   });
 
-  it('polls update checks hourly', async () => {
-    vi.useFakeTimers();
-
-    renderHomeWithLayout();
-
-    await flushEffects();
-    expect(checkUpdate).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3_599_999);
-    });
-    expect(checkUpdate).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1);
-    });
-    expect(checkUpdate).toHaveBeenCalledTimes(2);
-  });
-
-  it('enforces a one-minute minimum gap for focus-triggered update checks', async () => {
-    vi.useFakeTimers();
-
-    renderHomeWithLayout();
-
-    await flushEffects();
-    expect(checkUpdate).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(59_000);
-    });
-    act(() => {
-      window.dispatchEvent(new Event('focus'));
-    });
-    await flushEffects();
-    expect(checkUpdate).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
-    });
-    act(() => {
-      window.dispatchEvent(new Event('focus'));
-    });
-    await flushEffects();
-    expect(checkUpdate).toHaveBeenCalledTimes(2);
-  });
 });

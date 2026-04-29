@@ -264,19 +264,19 @@ class TestWorkspaceUpload:
         assert (mock_workspace / "archive.zip").exists()
 
     @pytest.mark.asyncio
-    async def test_chat_upload_rejects_disallowed_file_type(
+    async def test_chat_upload_accepts_binary_file_type(
         self, client: AsyncClient, mock_workspace: Path
     ):
-        """Chat uploads reject unsupported file types via purpose=chat."""
         resp = await client.post(
             "/api/workspace/upload",
             params={"purpose": "chat"},
-            files={"files": ("archive.zip", io.BytesIO(b"zip"), "application/zip")},
+            files={"files": ("capture.pcap", io.BytesIO(b"pcap"), "application/vnd.tcpdump.pcap")},
         )
         assert resp.status_code == status.HTTP_200_OK
         result = resp.json()["uploaded"][0]
-        assert "Unsupported file type" in result["error"]
-        assert not (mock_workspace / "archive.zip").exists()
+        assert result.get("error") is None
+        assert result["name"] == "capture.pcap"
+        assert (mock_workspace / "capture.pcap").exists()
 
     @pytest.mark.asyncio
     async def test_upload_overwrites_duplicate_file_without_chat_purpose(

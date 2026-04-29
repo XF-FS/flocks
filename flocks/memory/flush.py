@@ -408,7 +408,7 @@ async def extract_and_save(
         memory_text = summary
 
     daily = DailyMemory()
-    header = f"\n## Session {session_id[:16]}… ({today} {now_ts})\n\n"
+    header = await _build_memory_header(session_id, today, now_ts)
     content_to_write = header + memory_text + "\n"
 
     try:
@@ -427,3 +427,42 @@ async def extract_and_save(
             "session_id": session_id,
             "error": str(e),
         })
+
+
+async def _build_memory_header(session_id: str, today: str, now_ts: str) -> str:
+    title = f"\n## Session {session_id[:16]}… ({today} {now_ts})\n\n"
+    try:
+        from flocks.session.session import Session
+
+        session = await Session.get_by_id(session_id)
+    except Exception as exc:
+        log.debug("extract_and_save.session_header_error", {
+            "session_id": session_id,
+            "error": str(exc),
+        })
+        return title
+
+    if not session:
+        return title
+
+    metadata = dict(session.metadata or {})
+    source = metadata.get("idleRetiredSource")
+    if not isinstance(source, dict):
+        return title
+
+    lines = [
+        f"- Source: {source.get('sourceType', 'unknown')}",
+        "- Retired reason: idle_timeout",
+    ]
+    if source.get("entrypoint"):
+        lines.append(f"- Entrypoint: {source['entrypoint']}")
+    if source.get("senderID"):
+        lines.append(f"- Sender: {source['senderID']}")
+    if source.get("chatID"):
+        lines.append(f"- Chat: {source['chatID']}")
+    if source.get("messageID"):
+        lines.append(f"- Source message: {source['messageID']}")
+    if metadata.get("idleRetiredNewSessionID"):
+        lines.append(f"- New session: {metadata['idleRetiredNewSessionID']}")
+
+    return title + "\n".join(lines) + "\n\n"

@@ -92,12 +92,12 @@
       "regenerateFailed": "Failed to regenerate message"
     },
     "upload": {
-      "select": "Upload documents",
+      "select": "Upload files",
       "remove": "Remove file",
       "retry": "Retry upload",
-      "dropHint": "Drop document files to upload",
+      "dropHint": "Drop files to upload",
       "waiting": "Files are still uploading. Please wait before sending.",
-      "invalidType": "Only txt, md, json, yaml, yml, xml, csv, pdf, doc, and docx files are supported",
+      "invalidType": "File cannot be uploaded",
       "errorGeneric": "Upload failed. Please try again."
     },
     "tool": {

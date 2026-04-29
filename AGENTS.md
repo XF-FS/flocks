@@ -167,6 +167,48 @@ Rex has a dedicated `flocks_skills` tool for managing agent skills.
 > Rex delegates to self-enhance → self-enhance creates YAML-HTTP tool for Slack webhook → Rex calls `slack_send_message(webhook_url="...", text="...")`.
 > Note: Rex then asks user for the Slack webhook URL if not in secrets.
 
+## 文件处理前置检查（强制）
+
+**当用户上传或提供文件路径时，必须先执行以下检查：**
+
+### 检查流程
+
+1. **扫描 skill 列表**：检查是否有匹配该文件类型或场景的 skill
+2. **如有匹配的 skill** → 加载 skill → 按 skill 流程处理文件
+3. **如无匹配 skill** → 正常进行后续分析
+
+### 常见文件类型与对应 skill
+
+| 文件类型/场景 | 必须加载的 skill |
+|---|---|
+| JSON 告警文件、pcap 流量包 | `alert-fp-verify` |
+| Excel 文件 (.xlsx, .csv, .tsv) | `xlsx` |
+| PDF 文件 | `pdf` |
+| Word 文档 (.docx) | `docx` |
+| 资产测绘数据 (Hunter/FOFA/Quake CSV) | `asset-mapper-cleaner` |
+
+### ⚠️ 禁止行为
+
+- **禁止**直接 `read` 文件后跳过 skill 检查
+- **禁止**手动分析文件内容而忽略适用的 skill
+- **禁止**在 skill 明确要求"必须先使用"的情况下绕过 skill
+
+### 示例
+
+**错误做法：**
+```
+用户: [上传 alert.json]
+Agent: [直接 read 文件] → [手动分析] → 输出结果
+```
+
+**正确做法：**
+```
+用户: [上传 alert.json]
+Agent: [检查 skill 列表] → 发现 alert-fp-verify 适用 → skill(alert-fp-verify) → 按流程分析
+```
+
+---
+
 ## Important
 - 涉及 `tdp`、`onesec`、`skyeye`、`qingteng` 的任务时，必须先读取并遵循对应的 skill。
 - 对上述系统，禁止绕过对应 skill 直接调用相关 tools；也不要直接使用 `agent-browser`。

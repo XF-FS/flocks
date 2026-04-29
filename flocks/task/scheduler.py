@@ -18,6 +18,8 @@ except ImportError:
     croniter = None
     pytz = None
 
+DEFAULT_TZ = "Asia/Shanghai"
+
 
 class TaskScheduler:
     def __init__(self, check_interval: int = 30):
@@ -62,11 +64,15 @@ class TaskScheduler:
     async def _tick(self) -> None:
         from .manager import TaskManager
 
-        now = datetime.now(timezone.utc)
+        local_tz = pytz.timezone(DEFAULT_TZ) if pytz else None
+        now = datetime.now(timezone.utc).astimezone(local_tz) if local_tz else datetime.now(timezone.utc)
         schedulers = await TaskStore.list_due_schedulers()
         for scheduler in schedulers:
             next_run = self._parse_next_run(scheduler.trigger)
-            if not next_run or next_run > now:
+            if not next_run:
+                continue
+            next_run_local = next_run.astimezone(local_tz) if local_tz else next_run
+            if next_run_local > now:
                 continue
             active = await TaskStore.get_active_execution_for_scheduler(scheduler.id)
             if active is not None:
@@ -96,16 +102,26 @@ class TaskScheduler:
 
     @staticmethod
     def _parse_next_run(trigger: TaskTrigger) -> Optional[datetime]:
+        tz_name = trigger.timezone or DEFAULT_TZ
+        local_tz = pytz.timezone(tz_name) if pytz else None
+        utc_tz = timezone.utc
+
         if trigger.run_at and not trigger.next_run:
             run_at = trigger.run_at
             if run_at.tzinfo is None:
-                run_at = run_at.replace(tzinfo=timezone.utc)
-            return run_at
+                if local_tz:
+                    run_at = local_tz.localize(run_at)
+                else:
+                    run_at = run_at.replace(tzinfo=utc_tz)
+            return run_at.astimezone(utc_tz)
         if trigger.next_run:
             next_run = trigger.next_run
             if next_run.tzinfo is None:
-                next_run = next_run.replace(tzinfo=timezone.utc)
-            return next_run
+                if local_tz:
+                    next_run = local_tz.localize(next_run)
+                else:
+                    next_run = next_run.replace(tzinfo=utc_tz)
+            return next_run.astimezone(utc_tz)
         if trigger.cron:
             return TaskScheduler._compute_next(trigger)
         return None
@@ -119,10 +135,10 @@ class TaskScheduler:
             return None
         base_utc = after or datetime.now(timezone.utc)
         try:
-            tz_name = trigger.timezone or "Asia/Shanghai"
-            if pytz is not None:
+            tz_name = trigger.timezone or DEFAULT_TZ
+            local_tz = pytz.timezone(tz_name) if pytz else None
+            if local_tz is not None:
                 try:
-                    local_tz = pytz.timezone(tz_name)
                     base_local = base_utc.astimezone(local_tz)
                     iterator = croniter(trigger.cron, base_local)
                     next_local = iterator.get_next(datetime)

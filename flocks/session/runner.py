@@ -21,7 +21,7 @@ from flocks.utils.log import Log
 from flocks.utils.id import Identifier
 from flocks.session.session import Session, SessionInfo
 from flocks.session.message import Message, MessageInfo, MessageRole
-from flocks.session.prompt import SystemPrompt, SessionPrompt
+from flocks.session.prompt import SystemPrompt, SessionPrompt, load_prompt_fragment
 from flocks.session.core.status import SessionStatus, SessionStatusRetry, SessionStatusBusy
 from flocks.session.lifecycle.retry import SessionRetry
 from flocks.session.lifecycle.compaction import SessionCompaction, CompactionPolicy
@@ -69,6 +69,46 @@ LLM_STREAM_FIRST_CHUNK_TIMEOUT_S = 60
 # reasoning and content generation phases; a tight inter-chunk timeout causes
 # spurious failures in those cases.
 LLM_STREAM_ONGOING_CHUNK_TIMEOUT_S = 300
+
+
+@dataclass(frozen=True)
+class TurnPromptProfile:
+    needs_tools: bool = False
+    needs_tool_catalog: bool = False
+    needs_project_context: bool = False
+    needs_memory: bool = False
+    needs_im_context: bool = False
+    needs_im_protocol: bool = False
+    needs_workflows: bool = False
+    needs_slash_commands: bool = False
+    needs_security_routing: bool = False
+
+    @classmethod
+    def legacy_all(cls) -> "TurnPromptProfile":
+        return cls(
+            needs_tools=True,
+            needs_tool_catalog=True,
+            needs_project_context=True,
+            needs_memory=True,
+            needs_im_context=True,
+            needs_im_protocol=True,
+            needs_workflows=True,
+            needs_slash_commands=True,
+            needs_security_routing=True,
+        )
+
+    def cache_key(self) -> Tuple[bool, ...]:
+        return (
+            self.needs_tools,
+            self.needs_tool_catalog,
+            self.needs_project_context,
+            self.needs_memory,
+            self.needs_im_context,
+            self.needs_im_protocol,
+            self.needs_workflows,
+            self.needs_slash_commands,
+            self.needs_security_routing,
+        )
 
 
 async def _iter_with_chunk_timeout(
@@ -675,10 +715,16 @@ class SessionRunner:
                 await self.callbacks.on_error(error)
             return StepResult(action="stop", error=error)
         
-        # Build prompts and tools
-        system_prompts = await self._build_system_prompts(agent)
         tools = await self._build_callable_tool_schema(agent, messages)
-        if self._should_use_text_tool_call_mode() and tools:
+        prompt_profile = await self._classify_turn_prompt_profile(
+            last_user=last_user,
+            agent=agent,
+            tools=tools,
+        )
+        if not prompt_profile.needs_tools:
+            tools = []
+        system_prompts = await self._build_system_prompts(agent, prompt_profile)
+        if prompt_profile.needs_tools and self._should_use_text_tool_call_mode() and tools:
             text_tool_catalog = self._build_text_tool_call_catalog_prompt(tools)
             if text_tool_catalog:
                 system_prompts.append(text_tool_catalog)
@@ -1094,12 +1140,167 @@ Please address this message and continue with your tasks.
                 "model_id": self.model_id,
                 "error": str(exc),
             })
+
+    async def _classify_turn_prompt_profile(
+        self,
+        *,
+        last_user: MessageInfo,
+        agent: AgentInfo,
+        tools: List[Dict[str, Any]],
+    ) -> TurnPromptProfile:
+        try:
+            text = (await Message.get_text_content(last_user)).lower()
+        except Exception:
+            text = ""
+        try:
+            parts = await Message.parts(last_user.id, self.session.id)
+            has_file_part = any(getattr(part, "type", None) == "file" for part in parts)
+        except Exception:
+            has_file_part = False
+
+        def has_any(keywords: Tuple[str, ...]) -> bool:
+            return any(keyword in text for keyword in keywords)
+
+        project_keywords = (
+            "代码", "文件", "路径", "测试", "报错", "修改", "实现", "优化",
+            "重构", "commit", "diff", "git", "test", "error", "bug",
+            "fix", "implement", "refactor", "file", "path", ".py", ".ts",
+            ".tsx", ".js", ".json", ".md", "@",
+        )
+        memory_keywords = ("记住", "记忆", "之前", "上次", "历史", "偏好", "remember", "memory", "last time")
+        im_keywords = (
+            "企业微信", "wecom", "飞书", "feishu", "钉钉", "dingtalk",
+            "发送消息", "发消息", "通知", "群", "session id",
+        )
+        workflow_keywords = ("workflow", "工作流", "runbook", "sop", "流程", "playbook")
+        slash_keywords = ("slash", "命令", "帮助", "/help", "/skills", "/tools", "/workflows")
+        tool_catalog_keywords = ("工具", "tool", "skill", "能力", "能做什么", "怎么做", "找一个")
+        security_keywords = (
+            "告警", "ioc", "漏洞", "cve", "xve", "情报", "取证", "威胁",
+            "攻击", "样本", "hash", "域名", "ip", "ndr", "应急", "入侵",
+            "恶意", "钓鱼", "木马", "后门", "webshell", "forensics",
+            "vulnerability", "threat", "malware", "phishing",
+        )
+
+        needs_project_context = has_file_part or has_any(project_keywords)
+        needs_im_protocol = has_any(im_keywords)
+        needs_workflows = has_any(workflow_keywords)
+        needs_slash_commands = has_any(slash_keywords) or text.strip().startswith("/")
+        needs_security_routing = has_any(security_keywords)
+        needs_tool_catalog = has_any(tool_catalog_keywords) or needs_workflows
+        needs_tools = bool(tools) and (
+            needs_project_context
+            or needs_im_protocol
+            or needs_workflows
+            or needs_slash_commands
+            or needs_security_routing
+            or needs_tool_catalog
+        )
+
+        return TurnPromptProfile(
+            needs_tools=needs_tools,
+            needs_tool_catalog=needs_tool_catalog,
+            needs_project_context=needs_project_context,
+            needs_memory=has_any(memory_keywords),
+            needs_im_context=needs_im_protocol,
+            needs_im_protocol=needs_im_protocol,
+            needs_workflows=needs_workflows,
+            needs_slash_commands=needs_slash_commands,
+            needs_security_routing=needs_security_routing and getattr(agent, "name", "") == "rex",
+        )
+
+    async def _build_rex_intent_prompts(
+        self,
+        agent: AgentInfo,
+        profile: TurnPromptProfile,
+    ) -> List[str]:
+        if getattr(agent, "name", "") != "rex":
+            return []
+
+        prompts: List[str] = []
+        if profile.needs_im_protocol:
+            try:
+                from flocks.agent.agents.rex.prompt_builder import _build_im_send_section
+                prompts.append(_build_im_send_section())
+            except Exception as exc:
+                log.debug("runner.rex_im_prompt.failed", {"error": str(exc)})
+
+        if profile.needs_slash_commands:
+            try:
+                from flocks.agent.agents.rex.prompt_builder import _build_slash_commands_section
+                section = _build_slash_commands_section()
+                if section:
+                    prompts.append(section)
+            except Exception as exc:
+                log.debug("runner.rex_slash_prompt.failed", {"error": str(exc)})
+
+        if profile.needs_security_routing:
+            section = await self._build_rex_security_priority_prompt()
+            if section:
+                prompts.append(section)
+
+        if profile.needs_workflows:
+            section = await self._build_workflows_prompt()
+            if section:
+                prompts.append(section)
+
+        return prompts
+
+    async def _build_rex_security_priority_prompt(self) -> str:
+        try:
+            from flocks.agent.agent import AvailableAgent
+            from flocks.agent.agents.rex.prompt_builder import _build_security_priority_section
+
+            agents = []
+            for candidate in await Agent.list():
+                metadata = candidate.prompt_metadata
+                if (
+                    metadata
+                    and metadata.category == "security"
+                    and candidate.delegatable
+                    and candidate.mode != "primary"
+                    and not candidate.hidden
+                ):
+                    agents.append(AvailableAgent(
+                        name=candidate.name,
+                        description=candidate.description or "",
+                        metadata=metadata,
+                    ))
+            return _build_security_priority_section(agents)
+        except Exception as exc:
+            log.debug("runner.rex_security_prompt.failed", {"error": str(exc)})
+            return ""
+
+    async def _build_workflows_prompt(self) -> str:
+        try:
+            from flocks.agent.agent import AvailableWorkflow
+            from flocks.agent.prompt_utils import build_workflows_section
+            from flocks.workflow.center import scan_skill_workflows
+
+            workflows = []
+            for entry in await scan_skill_workflows():
+                workflows.append(AvailableWorkflow(
+                    name=entry.get("name") or "",
+                    description=entry.get("description") or "",
+                    path=entry.get("workflowPath") or "",
+                    source=entry.get("sourceType") or "project",
+                ))
+            return build_workflows_section(workflows)
+        except Exception as exc:
+            log.debug("runner.workflow_prompt.failed", {"error": str(exc)})
+            return ""
     
-    async def _build_system_prompts(self, agent: AgentInfo) -> List[str]:
+    async def _build_system_prompts(
+        self,
+        agent: AgentInfo,
+        profile: Optional[TurnPromptProfile] = None,
+    ) -> List[str]:
         """Build system prompts."""
+        profile = profile or TurnPromptProfile.legacy_all()
         tool_revision = ToolRegistry.revision()
         cache_key = (
-            f"system_prompts:{self.session.id}:{agent.name}:{self.provider_id}:{self.model_id}:{tool_revision}"
+            f"system_prompts:{self.session.id}:{agent.name}:{self.provider_id}:"
+            f"{self.model_id}:{tool_revision}:{profile.cache_key()}"
         )
         cached = self._static_cache.get(cache_key)
         if cached is not None:
@@ -1112,7 +1313,7 @@ Please address this message and continue with your tasks.
         prompts.extend(provider_prompts)
         
         # Memory bootstrap context (matching OpenClaw's injection)
-        if self._memory_bootstrap_data:
+        if profile.needs_memory and self._memory_bootstrap_data:
             # Add memory instructions
             instructions = self._memory_bootstrap_data.get("instructions", "")
             if instructions:
@@ -1131,38 +1332,41 @@ Please address this message and continue with your tasks.
                 "has_main": main_memory is not None,
             })
         
-        # Environment info
-        env_prompts = await SystemPrompt.environment(
-            directory=self.session.directory,
-            vcs="git" if self.session.directory else None,
-        )
-        prompts.extend(env_prompts)
-        
-        # Custom instructions
-        custom_prompts = await SystemPrompt.custom(directory=self.session.directory)
-        prompts.extend(custom_prompts)
+        if profile.needs_project_context:
+            env_prompts = await SystemPrompt.environment(
+                directory=self.session.directory,
+                vcs="git" if self.session.directory else None,
+            )
+            prompts.extend(env_prompts)
+            
+            custom_prompts = await SystemPrompt.custom(directory=self.session.directory)
+            prompts.extend(custom_prompts)
         
         # Agent-specific prompt (if any)
         if agent.prompt:
             prompts.append(agent.prompt)
 
-        # Sandbox runtime context for better tool/path awareness
-        sandbox_prompt = await self._build_sandbox_prompt(agent)
-        if sandbox_prompt:
-            prompts.append(sandbox_prompt)
+        if profile.needs_project_context:
+            sandbox_prompt = await self._build_sandbox_prompt(agent)
+            if sandbox_prompt:
+                prompts.append(sandbox_prompt)
         
         # Channel context: inject the IM channel and session info when this
         # session originates from an IM channel (Feishu / WeCom / DingTalk).
-        channel_ctx_prompt = await self._build_channel_context_prompt()
-        if channel_ctx_prompt:
-            prompts.append(channel_ctx_prompt)
+        if profile.needs_im_context:
+            channel_ctx_prompt = await self._build_channel_context_prompt()
+            if channel_ctx_prompt:
+                prompts.append(channel_ctx_prompt)
 
-        # Tool instructions
-        prompts.append(self._get_tool_instructions())
+        if profile.needs_tools:
+            prompts.append(self._get_tool_instructions())
 
-        tool_catalog_prompt = self._build_tool_catalog_prompt(agent)
-        if tool_catalog_prompt:
-            prompts.append(tool_catalog_prompt)
+        if profile.needs_tool_catalog:
+            tool_catalog_prompt = self._build_tool_catalog_prompt(agent)
+            if tool_catalog_prompt:
+                prompts.append(tool_catalog_prompt)
+
+        prompts.extend(await self._build_rex_intent_prompts(agent, profile))
 
         # Debug: optionally print system prompt during execution
         if os.getenv("FLOCKS_PRINT_SYSTEM_PROMPT", "").lower() in ("1", "true", "yes"):
@@ -1217,12 +1421,9 @@ Please address this message and continue with your tasks.
             svc = SessionBindingService()
             bindings = await svc.get_bindings_by_session(self.session.id)
             if not bindings:
-                return (
-                    f"## Current Session Context\n\n"
-                    f"This conversation originates from the **Flocks Web UI** (not an IM channel).\n"
-                    f"Session ID: {self.session.id}\n\n"
-                    f"When the user asks to send a message to an IM platform, you do NOT have a "
-                    f"target IM session ID yet — you must discover and ask the user to pick one."
+                return load_prompt_fragment(
+                    "runtime/channel_context_web.md",
+                    session_id=self.session.id,
                 )
 
             # Map channel_id prefix → human-readable platform name
@@ -1244,14 +1445,10 @@ Please address this message and continue with your tasks.
                 parts.append(f"- Platform: {platform}, chat_type: {chat_type}, channel_id: {cid}")
 
             lines = "\n".join(parts)
-            return (
-                f"## Current IM Channel Context\n\n"
-                f"This conversation originates from an IM channel. Details:\n"
-                f"{lines}\n"
-                f"Session ID: {self.session.id}\n\n"
-                f"You can use this information when the user asks which platform they are "
-                f"on, when sending messages back to the channel, or when the context of "
-                f"the conversation depends on the IM source."
+            return load_prompt_fragment(
+                "runtime/channel_context_im.md",
+                lines=lines,
+                session_id=self.session.id,
             )
         except Exception as e:
             log.debug("runner.channel_context_prompt.error", {"error": str(e)})
@@ -1260,22 +1457,7 @@ Please address this message and continue with your tasks.
     def _get_tool_instructions(self) -> str:
         from flocks.session.prompt_strings import PROMPT_TOOL_INSTRUCTIONS
         if self._should_use_text_tool_call_mode():
-            return (
-                "You have access to tools, but for this model you MUST call them using "
-                "MiniMax XML embedded in text instead of native API tool-calling.\n\n"
-                "Required format:\n"
-                "<minimax:tool_call>\n"
-                "<invoke name=\"tool_name\">\n"
-                "<parameter name=\"param_name\">json_or_string_value</parameter>\n"
-                "</invoke>\n"
-                "</minimax:tool_call>\n\n"
-                "Rules:\n"
-                "- Emit exactly one tool call block when you need a tool.\n"
-                "- Use valid tool names only.\n"
-                "- Parameter values must be valid JSON scalars/objects/arrays when appropriate.\n"
-                "- After tool results are returned, continue the task instead of repeating the same call.\n"
-                "- Do not use native API tool-calling for this model.\n"
-            )
+            return load_prompt_fragment("runtime/minimax_tool_instructions.md")
         return PROMPT_TOOL_INSTRUCTIONS
 
     def _list_catalog_tool_infos(self, agent: AgentInfo) -> List[Any]:
@@ -1313,29 +1495,14 @@ Please address this message and continue with your tasks.
             return None
 
         is_rex = getattr(agent, "name", "") == "rex"
-        if is_rex:
-            rules = (
-                "You can see the full tool catalog for awareness. "
-                "This catalog is reference-only and does not define parameter names. "
-                "Only tools exposed in the current callable schema may be called directly. "
-                "If a tool appears in the catalog but is not exposed this turn, use `tool_search` first. "
-                "Use the current callable schema as the sole source of truth for parameters. "
-                "Do not invent parameters for tools that are not currently exposed."
-            )
-        else:
-            rules = (
-                "You can see a tool catalog derived from your configured callable tool set. "
-                "This catalog is reference-only and does not define parameter names. "
-                "Only tools exposed in the current callable schema may be called directly. "
-                "Use the current callable schema as the sole source of truth for parameters. "
-                "Do not infer argument names from the catalog. "
-                "Do not invent parameters for tools that are not currently exposed."
-            )
-
-        return (
-            "## Tool Catalog Awareness\n\n"
-            f"{rules}\n\n"
-            f"{catalog_summary}"
+        template = (
+            "runtime/tool_catalog_awareness_rex.md"
+            if is_rex
+            else "runtime/tool_catalog_awareness_agent.md"
+        )
+        return load_prompt_fragment(
+            template,
+            catalog_summary=catalog_summary,
         )
 
     def _should_use_text_tool_call_mode(self) -> bool:
@@ -1362,12 +1529,7 @@ Please address this message and continue with your tasks.
         if not tools:
             return None
 
-        lines = [
-            "## Available Tools",
-            "Use only the following tools when emitting MiniMax XML tool calls.",
-            "This section is the authoritative callable schema for this turn.",
-            "Parameter names must match exactly. Never infer or rename arguments from the awareness catalog.",
-        ]
+        lines = load_prompt_fragment("runtime/text_tool_call_catalog_header.md").splitlines()
         for tool in tools:
             fn = tool.get("function", {})
             name = fn.get("name", "")
@@ -1780,8 +1942,45 @@ Please address this message and continue with your tasks.
             "total_messages": len(chat_messages),
             "roles": [m.role for m in chat_messages],
         })
+        await self._write_model_context_debug_log(chat_messages)
         
         return chat_messages
+
+    async def _write_model_context_debug_log(self, chat_messages: List[ChatMessage]) -> None:
+        try:
+            from flocks.config import Config
+            from flocks.workspace.manager import WorkspaceManager
+
+            cfg = await Config.get()
+            if not (cfg.debug and cfg.debug.model_context):
+                return
+
+            workspace = WorkspaceManager.get_instance()
+            output_dir = (
+                workspace.get_workspace_dir()
+                / "outputs"
+                / datetime.now().date().isoformat()
+                / "artifacts"
+            )
+            output_dir.mkdir(parents=True, exist_ok=True)
+            log_path = output_dir / "Context.log"
+            payload = {
+                "timestamp": datetime.now().isoformat(),
+                "session_id": self.session.id,
+                "step": self._step,
+                "provider_id": self.provider_id,
+                "model_id": self.model_id,
+                "message_count": len(chat_messages),
+                "messages": [
+                    message.model_dump(exclude_none=True)
+                    for message in chat_messages
+                ],
+            }
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False, indent=2))
+                f.write("\n")
+        except Exception as exc:
+            log.debug("runner.context_debug_log_failed", {"error": str(exc)})
     
     async def _call_llm(
         self,

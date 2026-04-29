@@ -267,6 +267,17 @@ class CompactionConfig(BaseModel):
     prune: Optional[bool] = Field(None, description="Enable pruning")
 
 
+class SessionLifecycleConfig(BaseModel):
+    """Session lifecycle configuration"""
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    auto_retire_idle: bool = Field(
+        False,
+        alias="autoRetireIdle",
+        description="Archive idle sessions and continue in a new session on the next user prompt.",
+    )
+
+
 class EnterpriseConfig(BaseModel):
     """Enterprise configuration"""
     url: Optional[str] = None
@@ -283,6 +294,21 @@ class ExperimentalConfig(BaseModel):
     primary_tools: Optional[List[str]] = None
     continue_loop_on_deny: Optional[bool] = None
     mcp_timeout: Optional[int] = Field(None, gt=0)
+
+
+class DebugConfig(BaseModel):
+    """Debug output configuration"""
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    session_lifecycle: Optional[SessionLifecycleConfig] = Field(
+        None,
+        alias="sessionLifecycle",
+    )
+    model_context: Optional[bool] = Field(
+        None,
+        alias="modelContext",
+        description="Append model request context to workspace outputs artifacts/Context.log.",
+    )
 
 
 # ==================== Updater Configuration ====================
@@ -536,6 +562,7 @@ class ConfigInfo(BaseModel):
     enterprise: Optional[EnterpriseConfig] = None
     compaction: Optional[CompactionConfig] = None
     experimental: Optional[ExperimentalConfig] = None
+    debug: Optional[DebugConfig] = None
     
     # Memory system configuration (added for memory system integration)
     memory: Optional[Any] = Field(

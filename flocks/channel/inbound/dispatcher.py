@@ -958,7 +958,7 @@ class InboundDispatcher:
         channel_config: Optional[ChannelConfig] = None,
         model: Optional[dict] = None,
         agent: Optional[str] = None,
-    ) -> None:
+    ) -> list[str]:
         from flocks.session.message import FilePart, Message, MessageRole
 
         attachment_messages = InboundDispatcher._expand_channel_media_messages(msg)
@@ -987,11 +987,11 @@ class InboundDispatcher:
         message = await Message.create(**create_kwargs)
 
         if channel_config is None:
-            return
+            return []
 
         raw_cfg = channel_config.model_dump(by_alias=True, exclude_none=True)
         if not attachment_messages:
-            return
+            return []
 
         try:
             stored_media = []
@@ -1012,7 +1012,9 @@ class InboundDispatcher:
                 stored_media.append((media, file_part))
 
             if not stored_media:
-                return
+                return []
+
+            display_paths = InboundDispatcher._display_paths_from_media(stored_media)
 
             try:
                 from flocks.session.message import TextPart
@@ -1021,9 +1023,8 @@ class InboundDispatcher:
                     if p.type == "text" and hasattr(p, "text") and (
                         p.text in ("[文件消息]", "[图片消息]")
                         or p.text.startswith("[文件消息:")
+                        or p.text.startswith("Attached files:")
                     ):
-                        from pathlib import PurePosixPath
-                        display_paths = InboundDispatcher._display_paths_from_media(stored_media)
                         new_text = "Attached files:\n" + "\n".join(
                             f"- {display_path}" for display_path in display_paths
                         )
@@ -1057,6 +1058,7 @@ class InboundDispatcher:
                     })
                 except Exception:
                     pass
+            return display_paths
         except Exception as e:
             log.warning("dispatcher.inbound_media_download_failed", {
                 "channel_id": msg.channel_id,
@@ -1064,6 +1066,7 @@ class InboundDispatcher:
                 "media_url": msg.media_url,
                 "error": str(e),
             })
+            return []
 
     @staticmethod
     def _expand_channel_media_messages(msg: InboundMessage) -> list[InboundMessage]:
@@ -1137,10 +1140,11 @@ class InboundDispatcher:
     @staticmethod
     def _display_paths_from_media(stored_media: list[tuple[Any, Any]]) -> list[str]:
         from pathlib import PurePosixPath
+        from urllib.parse import unquote
 
         display_paths: list[str] = []
         for media, _ in stored_media:
-            file_path_str = media.url.replace("file://", "")
+            file_path_str = unquote(media.url.replace("file://", ""))
             try:
                 display_path = str(PurePosixPath(file_path_str))
             except Exception:

@@ -1084,6 +1084,7 @@ class SessionCompaction:
     # Scales with context window: larger windows get more detail preserved.
     _TOOL_CONTENT_MIN_CHARS = 500
     _TOOL_CONTENT_MAX_CHARS = 4000
+    _READ_FILE_TOOL_NAMES = {"read", "readfile", "read_file"}
 
     @classmethod
     def _tool_content_limit(cls, policy: Optional[CompactionPolicy] = None) -> int:
@@ -1111,6 +1112,31 @@ class SessionCompaction:
             + "\n…(content truncated)…\n"
             + text[-tail_budget:]
         )
+
+    @classmethod
+    def _is_read_file_tool(cls, tool_name: str) -> bool:
+        normalized = (tool_name or "").replace("-", "_").replace(" ", "_").lower()
+        return normalized in cls._READ_FILE_TOOL_NAMES
+
+    @classmethod
+    def _format_read_file_call(cls, tool_input: Any) -> str:
+        if isinstance(tool_input, dict):
+            file_path = (
+                tool_input.get("filePath")
+                or tool_input.get("file_path")
+                or tool_input.get("path")
+                or tool_input.get("filename")
+                or "unknown"
+            )
+            extras = []
+            for key in ("offset", "limit", "start", "end"):
+                if key in tool_input and tool_input[key] is not None:
+                    extras.append(f"{key}={tool_input[key]}")
+            suffix = f"; {', '.join(extras)}" if extras else ""
+            return f"filePath={file_path}{suffix}"
+        if tool_input:
+            return f"input={tool_input}"
+        return "filePath=unknown"
 
     @classmethod
     def _extract_chat_messages(
@@ -1154,6 +1180,15 @@ class SessionCompaction:
                         tool_output = sd.get("output", "")
 
                         header = f"[tool: {tool_name}]" if tool_name else "[tool]"
+                        if cls._is_read_file_tool(tool_name):
+                            text_parts.append(
+                                f"{header} file read: {cls._format_read_file_call(tool_input)}"
+                            )
+                            if tool_output:
+                                text_parts.append(
+                                    f"{header} output: [file content omitted during context compaction]"
+                                )
+                            continue
                         if tool_input:
                             text_parts.append(
                                 f"{header} input: {cls._strip_tool_content(tool_input, content_limit)}"

@@ -276,20 +276,6 @@ const ABORT_SSE_SETTLE_DELAY = 2000;
 const SCROLL_BOTTOM_THRESHOLD_PX = 80;
 const FALLBACK_POLL_MS = 5_000;
 const WORKSPACE_UPLOAD_DEST = 'uploads';
-const FILE_INPUT_ACCEPT = '.txt,.md,.json,.yaml,.yml,.xml,.csv,.pdf,.doc,.docx';
-const ALLOWED_UPLOAD_EXTENSIONS = new Set([
-  'txt', 'md', 'json', 'yaml', 'yml', 'xml', 'csv', 'pdf', 'doc', 'docx',
-]);
-
-function getFileExtension(filename: string): string {
-  const normalized = filename.toLowerCase();
-  const idx = normalized.lastIndexOf('.');
-  return idx >= 0 ? normalized.slice(idx + 1) : '';
-}
-
-function isAllowedUploadFile(file: File): boolean {
-  return ALLOWED_UPLOAD_EXTENSIONS.has(getFileExtension(file.name));
-}
 
 export default function SessionChat({
   sessionId,
@@ -787,26 +773,11 @@ export default function SessionChat({
   const queueFilesForUpload = useCallback((files: File[]) => {
     if (files.length === 0) return;
     const validEntries: Array<{ id: string; file: File }> = [];
-    const invalidAttachments: ComposerAttachment[] = [];
 
     files.forEach((file, index) => {
       const id = `attachment-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`;
-      if (!isAllowedUploadFile(file)) {
-        invalidAttachments.push({
-          id,
-          file,
-          name: file.name,
-          status: 'error',
-          error: t('chat.upload.invalidType'),
-        });
-        return;
-      }
       validEntries.push({ id, file });
     });
-
-    if (invalidAttachments.length > 0) {
-      setAttachments((prev) => [...prev, ...invalidAttachments]);
-    }
 
     if (validEntries.length === 0) return;
 
@@ -821,7 +792,7 @@ export default function SessionChat({
     ]);
 
     void uploadSelectedFiles(validEntries);
-  }, [t, uploadSelectedFiles]);
+  }, [uploadSelectedFiles]);
 
   const handleFileSelection = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -1446,13 +1417,12 @@ export default function SessionChat({
 
       {/* Follow-up input */}
       {!hideInput && (
-        <div className={`flex-shrink-0 bg-white ${compact ? 'pl-4 pr-4 pb-4' : 'pl-6 pr-6 pb-6'}`}>
+        <div className={`flex-shrink-0 ${compact ? 'pl-4 pr-4 pb-4' : 'pl-6 pr-6 pb-6'}`}>
           <div className={`w-full ${!compact ? 'max-w-[960px] mx-auto' : ''}`}>
             <input
               ref={fileInputRef}
               type="file"
               className="hidden"
-              accept={FILE_INPUT_ACCEPT}
               multiple
               onChange={(event) => {
                 handleFileSelection(event.target.files);

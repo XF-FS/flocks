@@ -184,6 +184,17 @@ def _is_loopback_direct_request(request: Request) -> bool:
     return client_host in _loopback_hosts()
 
 
+def _is_loopback_bridge_request(request: Request) -> bool:
+    """
+    Trust scoped local bridge calls even when Node fetch adds fetch metadata.
+    """
+    return (
+        request.url.path == "/api/channel/wecom_new/openclaw/dispatch"
+        and request.headers.get("x-flocks-bridge") == "wecom-openclaw"
+        and _is_loopback_direct_request(request)
+    )
+
+
 def _read_api_token_from_request(request: Request) -> Optional[str]:
     """
     Read API token from Authorization Bearer or x-flocks-api-token header.
@@ -250,6 +261,12 @@ async def apply_auth_for_request(request: Request):
     if auth_middleware_exempt(request.url.path):
         token = set_current_auth_user(None)
         return None, token, None
+
+    if _is_loopback_bridge_request(request):
+        local_user = _build_local_service_user()
+        request.state.auth_user = local_user
+        token = set_current_auth_user(local_user)
+        return None, token, local_user
 
     # Non-browser clients: local loopback can run without token; remote requires API token.
     if not _is_browser_like_request(request):

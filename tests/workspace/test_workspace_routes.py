@@ -231,16 +231,17 @@ class TestUpload:
         assert result["name"] == "archive.zip"
         assert (_ws(workspace_client) / "archive.zip").exists()
 
-    def test_chat_upload_rejects_disallowed_file_type(self, workspace_client):
+    def test_chat_upload_accepts_binary_file_type(self, workspace_client):
         client = _client(workspace_client)
         r = client.post(
             "/api/workspace/upload?purpose=chat",
-            files=[("files", ("archive.zip", b"\x50\x4b\x03\x04", "application/zip"))],
+            files=[("files", ("capture.pcap", b"\xd4\xc3\xb2\xa1", "application/vnd.tcpdump.pcap"))],
         )
         assert r.status_code == 200
         result = r.json()["uploaded"][0]
-        assert "Unsupported file type" in result["error"]
-        assert not (_ws(workspace_client) / "archive.zip").exists()
+        assert result.get("error") is None
+        assert result["name"] == "capture.pcap"
+        assert (_ws(workspace_client) / "capture.pcap").exists()
 
     def test_upload_multiple_files(self, workspace_client):
         client = _client(workspace_client)

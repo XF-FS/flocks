@@ -81,7 +81,10 @@ def _landing_filename(msg: InboundMessage, guessed_filename: str) -> str:
         guessed_mime = _guess_mime_from_ext(guessed_filename)
         suffix = mimetypes.guess_extension(guessed_mime) if guessed_mime else ""
     msg_id = msg.message_id or "unknown"
-    return _sanitize_filename(f"{msg_id}{suffix or ''}")
+    original_name = Path(guessed_filename).name
+    if original_name:
+        return _sanitize_filename(f"[{msg_id}]_{original_name}")
+    return _sanitize_filename(f"[{msg_id}]{suffix or ''}")
 
 
 def _extract_aes_key(msg: InboundMessage) -> Optional[str]:

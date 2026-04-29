@@ -57,11 +57,6 @@ log = Log.create(service="workspace.routes")
 # Upload size limit read at request time so env-var changes take effect
 # without restarting the process.
 _DEFAULT_MAX_UPLOAD_MB = 100
-_ALLOWED_UPLOAD_EXTENSIONS = {
-    ".txt", ".md", ".json", ".yaml", ".yml", ".xml", ".csv",
-    ".pdf", ".doc", ".docx",
-}
-_ALLOWED_UPLOAD_LABEL = "txt, md, json, yaml, yml, xml, csv, pdf, doc, docx"
 _MAX_UPLOAD_RENAME_ATTEMPTS = 100
 
 
@@ -75,10 +70,6 @@ def _get_manager() -> WorkspaceManager:
     mgr = WorkspaceManager.get_instance()
     mgr.ensure_dirs()
     return mgr
-
-
-def _is_allowed_upload_filename(filename: str) -> bool:
-    return Path(filename).suffix.lower() in _ALLOWED_UPLOAD_EXTENSIONS
 
 
 def _resolve_upload_target(dest_dir: Path, filename: str, *, auto_rename: bool) -> Path:
@@ -266,13 +257,6 @@ async def upload_files(
             continue
 
         filename = Path(raw_name).name  # strip any dir component from client
-        if purpose == "chat" and not _is_allowed_upload_filename(filename):
-            results.append({
-                "name": filename,
-                "error": f"Unsupported file type (allowed: {_ALLOWED_UPLOAD_LABEL})",
-            })
-            continue
-
         # Read file in chunks to enforce size limit without loading entire
         # content into memory before checking.
         chunks: list[bytes] = []
