@@ -414,6 +414,45 @@ class TestOpenAIBaseProviderTemperature:
         kwargs = create.await_args.kwargs
         assert kwargs["temperature"] == 1.0
 
+    @pytest.mark.asyncio
+    async def test_chat_returns_native_tool_calls(self):
+        provider, create = self._build_provider_with_client()
+        response = self._mock_chat_response(content="")
+        response.choices[0].finish_reason = "tool_calls"
+        response.choices[0].message = MagicMock(
+            content="",
+            tool_calls=[
+                SimpleNamespace(
+                    id="call_1",
+                    type="function",
+                    function=SimpleNamespace(
+                        name="threatbook_ip_query",
+                        arguments='{"ip":"43.254.24.169"}',
+                    ),
+                )
+            ],
+        )
+        create.return_value = response
+
+        from flocks.provider.provider import ChatMessage
+
+        result = await provider.chat(
+            "kimi-k2.5",
+            [ChatMessage(role="user", content="hello")],
+        )
+
+        assert result.finish_reason == "tool_calls"
+        assert result.tool_calls == [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "threatbook_ip_query",
+                    "arguments": '{"ip":"43.254.24.169"}',
+                },
+            }
+        ]
+
 
 class TestExtractReasoningContent:
     """Regression: some proxies send stream chunks with ``delta is None``."""

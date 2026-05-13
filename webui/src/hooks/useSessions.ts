@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, startTransition } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { sessionApi } from '@/api/session';
 import client from '@/api/client';
 import type { Session, Message } from '@/types';
@@ -179,6 +179,9 @@ export function useSessionMessages(sessionId?: string) {
         parts: msg.parts || [],
         agent: msg.info.agent,
         model: msg.info.model,
+        modelID: msg.info.modelID,
+        providerID: msg.info.providerID,
+        tokens: msg.info.tokens,
         timestamp: msg.info.time?.created || Date.now(),
         finish: msg.info.finish || null,
         compacted: msg.info.compacted || null,
@@ -226,6 +229,9 @@ export function useSessionMessages(sessionId?: string) {
           updated[existingIndex] = {
             ...existing,
             ...messageInfo,
+            modelID: messageInfo.modelID ?? existing.modelID,
+            providerID: messageInfo.providerID ?? existing.providerID,
+            tokens: messageInfo.tokens ?? existing.tokens,
             timestamp: messageInfo.time?.created || existing.timestamp,
             // Preserve compacted/finish from the authoritative refetch data —
             // SSE events never carry these fields, so a naive spread would
@@ -261,6 +267,9 @@ export function useSessionMessages(sessionId?: string) {
               parts: updated[tempIndex].parts,
               agent: messageInfo.agent,
               model: messageInfo.model,
+              modelID: messageInfo.modelID,
+              providerID: messageInfo.providerID,
+              tokens: messageInfo.tokens,
               timestamp: messageInfo.time?.created || updated[tempIndex].timestamp,
             };
             return updated;
@@ -275,6 +284,9 @@ export function useSessionMessages(sessionId?: string) {
           parts: [],
           agent: messageInfo.agent,
           model: messageInfo.model,
+          modelID: messageInfo.modelID,
+          providerID: messageInfo.providerID,
+          tokens: messageInfo.tokens,
           timestamp: messageInfo.time?.created || Date.now(),
         }];
       });
@@ -283,24 +295,9 @@ export function useSessionMessages(sessionId?: string) {
      * 增量更新 message part（用于流式展示）
      * @param partInfo - part 对象，包含 id, messageID, sessionID, type, text 等
      * @param delta - 本次增量文本（如果有的话）
-     *
-     * 首次出现的 part（结构性变化）立即同步更新，确保"思考中"等指示符
-     * 即时显示；已知 part 的内容增量则用 startTransition 降低优先级，
-     * 允许 React 合批调度以避免高频 SSE chunk 阻塞主线程。
      */
     updateMessagePart: (partInfo: any, delta?: string) => {
-      const isNewPart = !knownPartIdsRef.current.has(partInfo.id);
-      if (isNewPart) {
-        // Structural change: first appearance of this part — must render immediately
-        // so that "thinking" / "streaming" indicators show without delay.
-        knownPartIdsRef.current.add(partInfo.id);
-        setMessages(prev => applyMessagePartUpdate(prev, partInfo, delta));
-      } else {
-        // Content delta on an existing part — low priority, allow React to batch.
-        startTransition(() => {
-          setMessages(prev => applyMessagePartUpdate(prev, partInfo, delta));
-        });
-      }
+      setMessages(prev => applyMessagePartUpdate(prev, partInfo, delta));
     },
     replaceMessageText: (messageId: string, partId: string, text: string) => {
       setMessages(prev => prev.map((message) => {

@@ -1,2 +1,4 @@
 ## Available Tools
-Use only these tools in MiniMax XML calls. This is the authoritative callable schema for this turn; parameter names must match exactly.
+Use only the following tools when emitting MiniMax XML tool calls.
+This section is the authoritative callable schema for this turn.
+Parameter names must match exactly. Never infer or rename arguments from the awareness catalog.

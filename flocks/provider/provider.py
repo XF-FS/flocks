@@ -49,6 +49,7 @@ class ProviderType(str, Enum):
     VERTEX_ANTHROPIC = "google-vertex-anthropic"
     AZURE_COGNITIVE = "azure-cognitive-services"
     ZENMUX = "zenmux"
+    XIAOMI_MIMO = "xiaomi-mimo"
 
 
 class ModelCapabilities(BaseModel):
@@ -236,6 +237,7 @@ class Provider:
                 ("ollama", "flocks.provider.sdk.ollama", "OllamaProvider"),
                 # Client-side tool calling (for backends without --enable-auto-tool-choice)
                 ("cherry", "flocks.provider.sdk.cherry", "CherryProvider"),
+                ("xiaomi-mimo", "flocks.provider.sdk.xiaomi_mimo", "XiaomiMimoProvider"),
             ]
             
             for provider_id, module_name, class_name in providers_to_register:

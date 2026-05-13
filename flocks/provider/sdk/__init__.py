@@ -62,6 +62,8 @@ from flocks.provider.sdk.vertex_anthropic import VertexAnthropicProvider
 from flocks.provider.sdk.azure_cognitive import AzureCognitiveServicesProvider
 from flocks.provider.sdk.zenmux import ZenMuxProvider
 
+from flocks.provider.sdk.xiaomi_mimo import XiaomiMimoProvider
+
 
 __all__ = [
     # Core providers
@@ -97,4 +99,5 @@ __all__ = [
     "VertexAnthropicProvider",
     "AzureCognitiveServicesProvider",
     "ZenMuxProvider",
+    "XiaomiMimoProvider",
 ]

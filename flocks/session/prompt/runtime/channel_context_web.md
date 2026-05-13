@@ -1,6 +1,6 @@
 ## Current Session Context
 
-Source: Flocks Web UI, not an IM channel.
+This conversation originates from the **Flocks Web UI** (not an IM channel).
 Session ID: {{session_id}}
 
-No target IM session is preselected. Resolve one before sending IM messages.
+When the user asks to send a message to an IM platform, you do NOT have a target IM session ID yet - you must discover and ask the user to pick one.

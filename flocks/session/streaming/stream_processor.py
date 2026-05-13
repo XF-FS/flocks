@@ -143,7 +143,7 @@ class StreamProcessor:
         # Send updates at most every 50ms during streaming
         self._last_text_event_time: float = 0
         self._last_reasoning_event_time: Dict[str, float] = {}  # Track per reasoning ID
-        self._text_event_throttle_ms: float = 50
+        self._text_event_throttle_ms: float = 16
         self.recent_tool_signatures: List[tuple[str, str]] = []
         
         # Finish state

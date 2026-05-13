@@ -263,8 +263,22 @@ class WatcherConfig(BaseModel):
 
 class CompactionConfig(BaseModel):
     """Compaction configuration"""
+    model_config = {"extra": "allow", "populate_by_name": True}
+
     auto: Optional[bool] = Field(None, description="Enable auto compaction")
     prune: Optional[bool] = Field(None, description="Enable pruning")
+    micro_compact_keep_recent: Optional[int] = Field(
+        None, alias="microCompactKeepRecent",
+        description="保留最近 N 个工具调用的输出（默认 5）")
+    micro_compact_enabled: Optional[bool] = Field(
+        None, alias="microCompactEnabled",
+        description="启用 micro compact（默认 true）")
+    micro_compact_idle_threshold_ms: Optional[int] = Field(
+        None, alias="microCompactIdleThresholdMs",
+        description="时间触发的闲置阈值毫秒（默认 3600000 即 60 分钟）")
+    micro_compact_min_saved_chars: Optional[int] = Field(
+        None, alias="microCompactMinSavedChars",
+        description="触发 micro compact 前要求至少可节省的字符数（默认 4000）")
 
 
 class SessionLifecycleConfig(BaseModel):

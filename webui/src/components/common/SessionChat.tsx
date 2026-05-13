@@ -30,6 +30,7 @@ import { useSSE, type SSEConnectionStatus } from '@/hooks/useSSE';
 import { useReasoningToggle } from '@/hooks/useReasoningToggle';
 import { usePendingQuestions, type PendingQuestion } from '@/hooks/usePendingQuestions';
 import { useAgents } from '@/hooks/useAgents';
+import { useProviders } from '@/hooks/useProviders';
 import { sessionApi } from '@/api/session';
 import client, { getApiBase } from '@/api/client';
 import { commandAPI, type Command } from '@/api/skill';
@@ -301,6 +302,7 @@ export default function SessionChat({
   const { t } = useTranslation('session');
   const { t: tCommon } = useTranslation('common');
   const { agents } = useAgents();
+  const { providers } = useProviders();
   const toast = useToast();
   const compact = display?.compact ?? true;
   const showActions = display?.showActions ?? false;
@@ -450,6 +452,33 @@ export default function SessionChat({
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   const hasUserMessage = useMemo(() => messages.some((m) => m.role === 'user'), [messages]);
+  const latestAssistantMessage = useMemo(
+    () => [...messages].reverse().find((m) => m.role === 'assistant' && (m.modelID || m.providerID || m.tokens)),
+    [messages],
+  );
+  const currentModelMeta = useMemo(() => {
+    const providerId = latestAssistantMessage?.providerID;
+    const modelId = latestAssistantMessage?.modelID;
+    if (!providerId || !modelId) return null;
+    const provider = providers.find((item) => item.id === providerId);
+    const model = provider?.models?.[modelId];
+    const label = model?.name || modelId;
+    const contextWindow = model?.limit?.context || 0;
+    const tokens = latestAssistantMessage?.tokens;
+    const usedTokens = tokens
+      ? (tokens.input || 0) + (tokens.output || 0) + (tokens.reasoning || 0) + (tokens.cache?.read || 0) + (tokens.cache?.write || 0)
+      : 0;
+    const ratio = contextWindow > 0 ? Math.max(0, Math.min(1, usedTokens / contextWindow)) : 0;
+    return {
+      providerId,
+      modelId,
+      label,
+      contextWindow,
+      usedTokens,
+      ratio,
+      percent: Math.round(ratio * 100),
+    };
+  }, [latestAssistantMessage, providers]);
 
   const sseEnabled = live || isStreaming || !hideInput;
 
@@ -1051,6 +1080,26 @@ export default function SessionChat({
     }
   }, [sessionId]);
 
+  const contextRing = useMemo(() => {
+    if (!currentModelMeta) return null;
+    const radius = 10;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference * (1 - currentModelMeta.ratio);
+    const danger = currentModelMeta.percent >= 85;
+    const warning = currentModelMeta.percent >= 65;
+    const strokeClass = danger
+      ? 'stroke-red-500'
+      : warning
+        ? 'stroke-amber-500'
+        : 'stroke-emerald-500';
+    return {
+      radius,
+      circumference,
+      offset,
+      strokeClass,
+    };
+  }, [currentModelMeta]);
+
   // Fire onStreamingDone when isStreaming transitions true → false
   useEffect(() => {
     if (prevStreamingRef.current && !isStreaming) {
@@ -1594,6 +1643,40 @@ export default function SessionChat({
                       </button>
                     </div>
                   </div>
+                  {currentModelMeta && contextRing && (
+                    <div
+                      className="flex items-center gap-2 rounded-lg border border-gray-200/80 bg-white/70 px-2.5 py-1 dark:border-gray-700 dark:bg-gray-900/40"
+                      title={`${currentModelMeta.providerId}/${currentModelMeta.modelId} · ${currentModelMeta.usedTokens}/${currentModelMeta.contextWindow || '?'} ctx`}
+                    >
+                      <span className="max-w-[170px] truncate text-[12px] font-medium text-gray-700 dark:text-gray-200">
+                        {currentModelMeta.label}
+                      </span>
+                      <div className="relative h-6 w-6 shrink-0">
+                        <svg className="h-6 w-6 -rotate-90" viewBox="0 0 24 24" aria-hidden="true">
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r={contextRing.radius}
+                            className="fill-none stroke-gray-200 dark:stroke-gray-700"
+                            strokeWidth="3"
+                          />
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r={contextRing.radius}
+                            className={`fill-none ${contextRing.strokeClass}`}
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeDasharray={contextRing.circumference}
+                            strokeDashoffset={contextRing.offset}
+                          />
+                        </svg>
+                        <span className="absolute inset-0 flex items-center justify-center text-[9px] font-semibold text-gray-700 dark:text-gray-200">
+                          {currentModelMeta.percent}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   {isStreaming ? (

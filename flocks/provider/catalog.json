@@ -1307,5 +1307,133 @@
     ],
     "env_vars": [],
     "models": {}
+  },
+  "xiaomi-mimo": {
+    "name": "Xiaomi MiMo",
+    "description": "MiMo — Xiaomi AI assistant with reasoning capabilities",
+    "npm": "@ai-sdk/openai-compatible",
+    "default_base_url": "https://api.xiaomimimo.com/v1",
+    "credential_schemas": [
+      {
+        "auth_method": "api_key",
+        "fields": [
+          {
+            "name": "api_key",
+            "label": "API Key",
+            "type": "secret",
+            "required": true,
+            "placeholder": "MiMo API Key"
+          },
+          {
+            "name": "base_url",
+            "label": "Base URL",
+            "type": "text",
+            "required": false,
+            "placeholder": "https://api.xiaomimimo.com/v1"
+          }
+        ]
+      }
+    ],
+    "env_vars": [
+      "MIMO_API_KEY"
+    ],
+    "models": {
+      "mimo-v2.5-pro": {
+        "name": "MiMo V2.5 Pro",
+        "family": "mimo-v2.5",
+        "capabilities": {
+          "supports_tools": true,
+          "supports_reasoning": true,
+          "supports_streaming": true
+        },
+        "limits": {
+          "context_window": 1048576,
+          "max_output_tokens": 131072
+        },
+        "pricing": {
+          "input": 7.00,
+          "output": 21.00,
+          "cache_read": 1.40,
+          "currency": "CNY"
+        }
+      },
+      "mimo-v2-pro": {
+        "name": "MiMo V2 Pro",
+        "family": "mimo-v2",
+        "capabilities": {
+          "supports_tools": true,
+          "supports_reasoning": true,
+          "supports_streaming": true
+        },
+        "limits": {
+          "context_window": 1048576,
+          "max_output_tokens": 131072
+        },
+        "pricing": {
+          "input": 7.00,
+          "output": 21.00,
+          "cache_read": 1.40,
+          "currency": "CNY"
+        }
+      },
+      "mimo-v2.5": {
+        "name": "MiMo V2.5",
+        "family": "mimo-v2.5",
+        "capabilities": {
+          "supports_tools": true,
+          "supports_reasoning": true,
+          "supports_streaming": true
+        },
+        "limits": {
+          "context_window": 1048576,
+          "max_output_tokens": 131072
+        },
+        "pricing": {
+          "input": 2.80,
+          "output": 14.00,
+          "cache_read": 0.56,
+          "currency": "CNY"
+        }
+      },
+      "mimo-v2-omni": {
+        "name": "MiMo V2 Omni",
+        "family": "mimo-v2",
+        "capabilities": {
+          "supports_tools": true,
+          "supports_vision": true,
+          "supports_reasoning": true,
+          "supports_streaming": true
+        },
+        "limits": {
+          "context_window": 262144,
+          "max_output_tokens": 131072
+        },
+        "pricing": {
+          "input": 2.80,
+          "output": 14.00,
+          "cache_read": 0.56,
+          "currency": "CNY"
+        }
+      },
+      "mimo-v2-flash": {
+        "name": "MiMo V2 Flash",
+        "family": "mimo-v2",
+        "capabilities": {
+          "supports_tools": true,
+          "supports_reasoning": true,
+          "supports_streaming": true
+        },
+        "limits": {
+          "context_window": 262144,
+          "max_output_tokens": 131072
+        },
+        "pricing": {
+          "input": 0.70,
+          "output": 2.10,
+          "cache_read": 0.07,
+          "currency": "CNY"
+        }
+      }
+    }
   }
 }

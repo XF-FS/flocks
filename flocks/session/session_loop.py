@@ -27,6 +27,7 @@ from flocks.session.core.turn_state import (
     set_turn_state,
     set_context_state,
     clear_turn_state,
+    get_context_state,
 )
 from flocks.session.lifecycle.compaction import (
     SessionCompaction,
@@ -825,6 +826,56 @@ class SessionLoop:
                         })
                     
                     try:
+                        # --- Time-based Micro Compact ---
+                        # Lightweight: no LLM call, just marks old tool outputs
+                        # as compacted.  Runs before token threshold checks so
+                        # that context is already smaller when we evaluate.
+                        try:
+                            from flocks.session.lifecycle.compaction.micro_compact import (
+                                apply_time_based as _micro_time_based,
+                            )
+                            _last_assistant_ts = 0
+                            for _msg in reversed(messages):
+                                _role = _msg.role.value if hasattr(_msg.role, "value") else _msg.role
+                                if _role != "assistant":
+                                    continue
+                                _time_created = getattr(_msg, "time", None)
+                                if isinstance(_time_created, dict):
+                                    _last_assistant_ts = _time_created.get("created", 0)
+                                elif hasattr(_time_created, "created"):
+                                    _last_assistant_ts = _time_created.created
+                                elif isinstance(_time_created, (int, float)):
+                                    _last_assistant_ts = int(_time_created)
+                                break
+
+                            _context_state = get_context_state(ctx.session.id)
+                            _micro_tc = 0
+                            if _last_assistant_ts and _context_state.last_micro_compact_idle_anchor != _last_assistant_ts:
+                                _micro_tc = await _micro_time_based(ctx.session.id, messages)
+                                set_context_state(
+                                    ctx.session.id,
+                                    tool_results_compacted=True if _micro_tc > 0 else None,
+                                    last_compaction_step=ctx.last_compaction_step,
+                                    last_compaction_reason="time_based_micro_compact" if _micro_tc > 0 else None,
+                                    last_micro_compact_idle_anchor=_last_assistant_ts,
+                                )
+                            if _micro_tc > 0:
+                                log.info("loop.time_based_micro_compact", {
+                                    "session_id": ctx.session.id,
+                                    "step": ctx.step,
+                                    "compacted": _micro_tc,
+                                })
+                                await cls._publish_runtime_event(callbacks, "context.micro_compacted", {
+                                    "sessionID": ctx.session.id,
+                                    "step": ctx.step,
+                                    "reason": "time_based_micro_compact",
+                                    "compactedToolResults": _micro_tc,
+                                })
+                        except Exception as _micro_err:
+                            log.debug("loop.time_based_micro_compact.error", {
+                                "error": str(_micro_err),
+                            })
+
                         current_input_tokens = (
                             tokens_dict.get("input", 0)
                             + (tokens_dict.get("cache", {}).get("read", 0) if isinstance(tokens_dict.get("cache"), dict) else 0)

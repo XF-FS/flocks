@@ -160,6 +160,11 @@ def build_provider_options(
                 "maxReasoningEffort": "high",
             }
 
+    # -- Xiaomi MiMo reasoning ----------------------------------------------
+    elif provider_id == "xiaomi-mimo":
+        if reasoning_enabled is not False and "mimo" in model_lower:
+            pass
+
     # -- max_tokens fallback from model config ------------------------------
     if resolve_max_tokens and "max_tokens" not in options:
         _apply_max_tokens_from_config(options, provider_id, model_id)

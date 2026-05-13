@@ -25,6 +25,13 @@ from flocks.session.lifecycle.compaction.models import (
     DEFAULT_COMPACTION_PROMPT,
 )
 from flocks.session.lifecycle.compaction.compaction import SessionCompaction
+from flocks.session.lifecycle.compaction.micro_compact import (
+    apply_count_based as micro_compact_count_based,
+    apply_time_based as micro_compact_time_based,
+    MICRO_COMPACT_EXCLUDE,
+    DEFAULT_KEEP_RECENT,
+    MICRO_COMPACT_PLACEHOLDER,
+)
 from flocks.session.lifecycle.compaction.orchestrator import (
     build_compaction_policy,
     run_compaction,
@@ -48,6 +55,12 @@ __all__ = [
     "PRUNE_PROTECTED_TOOLS",
     "PRESERVE_LAST_STEPS",
     "DEFAULT_COMPACTION_PROMPT",
+    # Micro Compact
+    "micro_compact_count_based",
+    "micro_compact_time_based",
+    "MICRO_COMPACT_EXCLUDE",
+    "DEFAULT_KEEP_RECENT",
+    "MICRO_COMPACT_PLACEHOLDER",
     # Orchestrator
     "SessionCompaction",
     "build_compaction_policy",

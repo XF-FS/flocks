@@ -88,11 +88,12 @@ def build_dynamic_rex_prompt(
         build_oracle_section,
         build_hard_blocks_section,
         build_anti_patterns_section,
+        build_workflows_section,
     )
 
     key_triggers = build_key_triggers_section(available_agents, available_skills)
-    security_priority = ""
-    im_send_section = ""
+    security_priority = _build_security_priority_section(available_agents)
+    im_send_section = _build_im_send_section()
     tool_selection = build_tool_selection_table(available_agents, available_tools, available_skills)
     explore_section = build_explore_section(available_agents)
     librarian_section = build_librarian_section(available_agents)
@@ -101,9 +102,9 @@ def build_dynamic_rex_prompt(
     oracle_section = build_oracle_section(available_agents)
     hard_blocks = build_hard_blocks_section()
     anti_patterns = build_anti_patterns_section()
-    slash_commands_section = ""
+    slash_commands_section = _build_slash_commands_section()
     task_management_section = _task_management_section(use_task_system)
-    workflows_section = ""
+    workflows_section = build_workflows_section(available_workflows or [])
     todo_hook_note = (
         "YOUR TASK CREATION WOULD BE TRACKED BY HOOK([SYSTEM REMINDER - TASK CONTINUATION])"
         if use_task_system

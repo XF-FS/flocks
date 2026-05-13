@@ -36,6 +36,7 @@ class ContextStateInfo(BaseModel):
     tool_results_compacted: bool = False
     last_compaction_step: Optional[int] = None
     last_compaction_reason: Optional[str] = None
+    last_micro_compact_idle_anchor: Optional[int] = None
 
 
 def set_turn_state(
@@ -82,6 +83,7 @@ def set_context_state(
     tool_results_compacted: Optional[bool] = None,
     last_compaction_step: Optional[int] = None,
     last_compaction_reason: Optional[str] = None,
+    last_micro_compact_idle_anchor: Optional[int] = None,
 ) -> ContextStateInfo:
     with _lock:
         previous = _context_state.get(session_id) or ContextStateInfo(sessionID=session_id)
@@ -98,6 +100,11 @@ def set_context_state(
             ),
             last_compaction_reason=(
                 previous.last_compaction_reason if last_compaction_reason is None else last_compaction_reason
+            ),
+            last_micro_compact_idle_anchor=(
+                previous.last_micro_compact_idle_anchor
+                if last_micro_compact_idle_anchor is None
+                else last_micro_compact_idle_anchor
             ),
         )
         _context_state[session_id] = context_state
